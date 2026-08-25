@@ -1,5 +1,6 @@
 """
 Async MongoDB connection using Motor.
+Optimized for both local MongoDB and MongoDB Atlas (mongodb+srv://).
 """
 from typing import Optional, Dict
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -24,23 +25,51 @@ class Database:
 
     async def connect(self) -> None:
         try:
+            # Atlas (mongodb+srv://) needs longer timeouts and TLS
+            is_atlas = settings.mongodb_url.startswith("mongodb+srv://")
+
+            client_kwargs = {
+                "maxPoolSize": settings.mongodb_max_pool_size,
+                "minPoolSize": settings.mongodb_min_pool_size,
+                "maxIdleTimeMS": settings.mongodb_max_idle_time_ms,
+                "retryWrites": True,
+                "w": "majority",
+            }
+
+            if is_atlas:
+                # Atlas-specific settings
+                client_kwargs["serverSelectionTimeoutMS"] = 30000  # 30s for Atlas
+                client_kwargs["connectTimeoutMS"] = 30000
+                client_kwargs["socketTimeoutMS"] = 30000
+                client_kwargs["tls"] = True
+                logger.info("Detected MongoDB Atlas connection - using extended timeouts")
+            else:
+                # Local/dev settings
+                client_kwargs["serverSelectionTimeoutMS"] = 5000
+
             self._client = AsyncIOMotorClient(
                 settings.mongodb_url,
-                maxPoolSize=settings.mongodb_max_pool_size,
-                minPoolSize=settings.mongodb_min_pool_size,
-                maxIdleTimeMS=settings.mongodb_max_idle_time_ms,
-                serverSelectionTimeoutMS=5000,
-                retryWrites=True,
-                w="majority"
+                **client_kwargs
             )
+
             await self._client.admin.command("ping")
             self._db = self._client[settings.database_name]
             logger.info(f"MongoDB connected: {settings.database_name}")
             await self._create_indexes()
         except (ServerSelectionTimeoutError, ConnectionFailure) as e:
             logger.error(f"MongoDB connection failed: {e}")
+            is_atlas = settings.mongodb_url.startswith("mongodb+srv://")
+            hint = ""
+            if is_atlas:
+                hint = (
+                    " Atlas connection failed. Check: "
+                    "(1) Your IP is whitelisted in Atlas Network Access, "
+                    "(2) Credentials are correct, "
+                    "(3) Firewall allows outbound to port 27017, "
+                    "(4) Atlas cluster is running."
+                )
             raise DatabaseConnectionError(
-                message="Unable to connect to database.",
+                message=f"Unable to connect to database.{hint}",
                 details={"url": settings.mongodb_url.replace("//", "//***:***@") if "@" in settings.mongodb_url else settings.mongodb_url}
             )
 

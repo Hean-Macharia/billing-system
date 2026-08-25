@@ -1,22 +1,35 @@
-"""
-Utility helpers for the ISP Billing System.
-"""
-from typing import Any, Dict, Optional, List
+"""Standardized API response utilities."""
+from typing import Any, Dict, List, Optional
 
 
 def success_response(
-    data: Any = None,
     message: str = "Success",
-    meta: Optional[Dict] = None
-) -> Dict:
+    data: Any = None,
+    status_code: int = 200,
+) -> Dict[str, Any]:
+    """Build a standardized success response."""
     response = {
         "success": True,
         "message": message,
+        "data": data,
     }
-    if data is not None:
-        response["data"] = data
-    if meta is not None:
-        response["meta"] = meta
+    return response
+
+
+def error_response(
+    message: str = "An error occurred",
+    error_code: str = "INTERNAL_SERVER_ERROR",
+    status_code: int = 500,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a standardized error response."""
+    response = {
+        "success": False,
+        "message": message,
+        "error_code": error_code,
+    }
+    if details:
+        response["details"] = details
     return response
 
 
@@ -24,38 +37,21 @@ def paginated_response(
     data: List[Any],
     total: int,
     page: int,
-    page_size: int,
-    message: str = "Success"
-) -> Dict:
-    total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+    limit: int,
+    message: str = "Data retrieved successfully",
+) -> Dict[str, Any]:
+    """Build a standardized paginated response."""
+    total_pages = (total + limit - 1) // limit if limit > 0 else 0
     return {
         "success": True,
         "message": message,
         "data": data,
         "meta": {
-            "pagination": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_prev": page > 1
-            }
-        }
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1,
+        },
     }
-
-
-def error_response(
-    message: str,
-    error_code: str,
-    status_code: int = 500,
-    details: Optional[Dict] = None
-) -> Dict:
-    response = {
-        "success": False,
-        "message": message,
-        "error_code": error_code,
-    }
-    if details is not None:
-        response["details"] = details
-    return response
