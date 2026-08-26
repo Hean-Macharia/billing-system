@@ -36,6 +36,7 @@ class ServicePackageCreate(BaseModel):
 
 class CustomerCreate(BaseModel):
     """Create a new customer."""
+    customer_number: str
     customer_code: str = Field(..., min_length=3, max_length=50)
     full_name: str = Field(..., min_length=1, max_length=200)
     email: Optional[EmailStr] = None

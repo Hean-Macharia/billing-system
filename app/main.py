@@ -64,7 +64,6 @@ class RequestTimingMiddleware:
         start = time.time()
         method = scope.get("method", "")
         path = scope.get("path", "")
-
         logger.info(f"Request started: {method} {path}")
 
         async def send_with_log(message):
@@ -104,7 +103,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
     )
 
-    # Middleware (order matters: outermost first)
+    # Middleware
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestTimingMiddleware)
     app.add_middleware(
@@ -120,27 +119,19 @@ def create_app() -> FastAPI:
         allowed_hosts=settings.allowed_hosts,
     )
 
-    # Global exception handlers
+    # Exception handlers
     @app.exception_handler(APIException)
     async def api_exception_handler(request: Request, exc: APIException):
         return JSONResponse(
             status_code=exc.status_code,
-            content=error_response(
-                message=exc.message,
-                error_code=exc.error_code,
-                status_code=exc.status_code,
-            ),
+            content=error_response(message=exc.message, error_code=exc.error_code, status_code=exc.status_code),
         )
 
     @app.exception_handler(AuthenticationError)
     async def auth_exception_handler(request: Request, exc: AuthenticationError):
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content=error_response(
-                message=exc.message,
-                error_code="AUTHENTICATION_ERROR",
-                status_code=status.HTTP_401_UNAUTHORIZED,
-            ),
+            content=error_response(message=exc.message, error_code="AUTHENTICATION_ERROR", status_code=status.HTTP_401_UNAUTHORIZED),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -148,44 +139,28 @@ def create_app() -> FastAPI:
     async def authorization_exception_handler(request: Request, exc: AuthorizationError):
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
-            content=error_response(
-                message=exc.message,
-                error_code="AUTHORIZATION_ERROR",
-                status_code=status.HTTP_403_FORBIDDEN,
-            ),
+            content=error_response(message=exc.message, error_code="AUTHORIZATION_ERROR", status_code=status.HTTP_403_FORBIDDEN),
         )
 
     @app.exception_handler(NotFoundError)
     async def not_found_exception_handler(request: Request, exc: NotFoundError):
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
-            content=error_response(
-                message=exc.message,
-                error_code="NOT_FOUND",
-                status_code=status.HTTP_404_NOT_FOUND,
-            ),
+            content=error_response(message=exc.message, error_code="NOT_FOUND", status_code=status.HTTP_404_NOT_FOUND),
         )
 
     @app.exception_handler(ConflictError)
     async def conflict_exception_handler(request: Request, exc: ConflictError):
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            content=error_response(
-                message=exc.message,
-                error_code="CONFLICT",
-                status_code=status.HTTP_409_CONFLICT,
-            ),
+            content=error_response(message=exc.message, error_code="CONFLICT", status_code=status.HTTP_409_CONFLICT),
         )
 
     @app.exception_handler(ValidationError)
     async def validation_exception_handler(request: Request, exc: ValidationError):
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content=error_response(
-                message=exc.message,
-                error_code="VALIDATION_ERROR",
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            ),
+            content=error_response(message=exc.message, error_code="VALIDATION_ERROR", status_code=status.HTTP_422_UNPROCESSABLE_ENTITY),
         )
 
     @app.exception_handler(Exception)
@@ -193,19 +168,19 @@ def create_app() -> FastAPI:
         logger.exception(f"Unhandled exception: {exc}")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content=error_response(
-                message="An internal server error occurred",
-                error_code="INTERNAL_SERVER_ERROR",
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            ),
+            content=error_response(message="An internal server error occurred", error_code="INTERNAL_SERVER_ERROR", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR),
         )
 
     # ── ROUTERS ──
-    from app.routes import auth, customers
+    from app.routes import auth, customers, services, subscriptions, invoices, payments
     from app.api.v1 import system
 
     app.include_router(auth.router)
     app.include_router(customers.router)
+    app.include_router(services.router)
+    app.include_router(subscriptions.router)
+    app.include_router(invoices.router)
+    app.include_router(payments.router)
     app.include_router(system.router)
 
     @app.get("/", tags=["Root"])
@@ -236,11 +211,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health/live", tags=["Health"])
     async def health_live():
-        return {
-            "success": True,
-            "message": "Application is alive",
-            "data": {"status": "alive"},
-        }
+        return {"success": True, "message": "Application is alive", "data": {"status": "alive"}}
 
     @app.get("/health/ready", tags=["Health"])
     async def health_ready():
@@ -248,22 +219,12 @@ def create_app() -> FastAPI:
         if not is_db_ok:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content=error_response(
-                    message="Database not ready",
-                    error_code="NOT_READY",
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                ),
+                content=error_response(message="Database not ready", error_code="NOT_READY", status_code=status.HTTP_503_SERVICE_UNAVAILABLE),
             )
-        return {
-            "success": True,
-            "message": "Application is ready",
-            "data": {"status": "ready", "database": "connected"},
-        }
+        return {"success": True, "message": "Application is ready", "data": {"status": "ready", "database": "connected"}}
 
     return app
 
 
-# Import datetime here to avoid circular import issues in lifespan
 from datetime import datetime, timezone
-
 app = create_app()
