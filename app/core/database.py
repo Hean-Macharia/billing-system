@@ -1,11 +1,6 @@
-"""
-Async MongoDB connection using Motor.
-Optimized for both local MongoDB and MongoDB Atlas (mongodb+srv://).
-"""
-from typing import Optional, Dict
+"""Async MongoDB database connection using Motor."""
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
-import time
+from pymongo.errors import ServerSelectionTimeoutError
 
 from app.core.config import settings
 from app.core.exceptions import DatabaseConnectionError
@@ -13,141 +8,165 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-class Database:
-    _instance: Optional["Database"] = None
-    _client: Optional[AsyncIOMotorClient] = None
-    _db: Optional[AsyncIOMotorDatabase] = None
+# Collections that will be used across the application
+COLLECTIONS = [
+    "users",
+    "customers",
+    "services",
+    "subscriptions",
+    "invoices",
+    "payments",
+    "vouchers",
+    "radius_sessions",
+    "audit_logs",
+    "sites",
+    "routers",
+]
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+# Indexes to create upfront for performance
+INDEXES = {
+    "users": [
+        {"keys": [("email", 1)], "unique": True},
+        {"keys": [("username", 1)], "unique": True},
+        {"keys": [("role", 1)]},
+        {"keys": [("status", 1)]},
+        {"keys": [("created_at", -1)]},
+    ],
+    "customers": [
+        {"keys": [("customer_code", 1)], "unique": True},
+        {"keys": [("email", 1)]},
+        {"keys": [("phone", 1)]},
+        {"keys": [("status", 1)]},
+        {"keys": [("customer_type", 1)]},
+        {"keys": [("assigned_to", 1)]},
+        {"keys": [("created_at", -1)]},
+    ],
+    "services": [
+        {"keys": [("name", 1)], "unique": True},
+        {"keys": [("status", 1)]},
+    ],
+    "subscriptions": [
+        {"keys": [("customer_id", 1)]},
+        {"keys": [("service_id", 1)]},
+        {"keys": [("status", 1)]},
+        {"keys": [("start_date", -1)]},
+    ],
+    "invoices": [
+        {"keys": [("customer_id", 1)]},
+        {"keys": [("invoice_number", 1)], "unique": True},
+        {"keys": [("status", 1)]},
+        {"keys": [("due_date", 1)]},
+        {"keys": [("created_at", -1)]},
+    ],
+    "payments": [
+        {"keys": [("customer_id", 1)]},
+        {"keys": [("invoice_id", 1)]},
+        {"keys": [("transaction_id", 1)], "unique": True},
+        {"keys": [("payment_method", 1)]},
+        {"keys": [("created_at", -1)]},
+    ],
+    "vouchers": [
+        {"keys": [("code", 1)], "unique": True},
+        {"keys": [("status", 1)]},
+        {"keys": [("expiry_date", 1)]},
+    ],
+    "radius_sessions": [
+        {"keys": [("username", 1)]},
+        {"keys": [("nas_ip_address", 1)]},
+        {"keys": [("start_time", -1)]},
+        {"keys": [("status", 1)]},
+    ],
+    "audit_logs": [
+        {"keys": [("user_id", 1)]},
+        {"keys": [("action", 1)]},
+        {"keys": [("resource", 1)]},
+        {"keys": [("created_at", -1)]},
+        {"keys": [("created_at", 1)], "expireAfterSeconds": 7776000},  # TTL: 90 days
+    ],
+    "sites": [
+        {"keys": [("name", 1)], "unique": True},
+        {"keys": [("status", 1)]},
+    ],
+    "routers": [
+        {"keys": [("name", 1)], "unique": True},
+        {"keys": [("ip_address", 1)], "unique": True},
+        {"keys": [("site_id", 1)]},
+        {"keys": [("status", 1)]},
+    ],
+}
+
+
+class Database:
+    """Singleton database manager."""
+
+    def __init__(self):
+        self.client: AsyncIOMotorClient = None
+        self.db: AsyncIOMotorDatabase = None
 
     async def connect(self) -> None:
+        """Establish MongoDB connection with pooling."""
         try:
-            # Atlas (mongodb+srv://) needs longer timeouts and TLS
-            is_atlas = settings.mongodb_url.startswith("mongodb+srv://")
-
-            client_kwargs = {
-                "maxPoolSize": settings.mongodb_max_pool_size,
-                "minPoolSize": settings.mongodb_min_pool_size,
-                "maxIdleTimeMS": settings.mongodb_max_idle_time_ms,
-                "retryWrites": True,
-                "w": "majority",
+            connection_options = {
+                "maxPoolSize": 50,
+                "minPoolSize": 10,
+                "serverSelectionTimeoutMS": 30000,
+                "connectTimeoutMS": 30000,
+                "socketTimeoutMS": 30000,
             }
 
-            if is_atlas:
-                # Atlas-specific settings
-                client_kwargs["serverSelectionTimeoutMS"] = 30000  # 30s for Atlas
-                client_kwargs["connectTimeoutMS"] = 30000
-                client_kwargs["socketTimeoutMS"] = 30000
-                client_kwargs["tls"] = True
+            # Detect Atlas connection
+            if "mongodb+srv" in settings.mongodb_url or "cluster" in settings.mongodb_url:
                 logger.info("Detected MongoDB Atlas connection - using extended timeouts")
-            else:
-                # Local/dev settings
-                client_kwargs["serverSelectionTimeoutMS"] = 5000
+                connection_options["tls"] = True
 
-            self._client = AsyncIOMotorClient(
+            self.client = AsyncIOMotorClient(
                 settings.mongodb_url,
-                **client_kwargs
+                **connection_options,
             )
+            self.db = self.client[settings.database_name]
 
-            await self._client.admin.command("ping")
-            self._db = self._client[settings.database_name]
+            # Verify connection
+            await self.client.admin.command("ping")
             logger.info(f"MongoDB connected: {settings.database_name}")
+
+            # Create indexes
             await self._create_indexes()
-        except (ServerSelectionTimeoutError, ConnectionFailure) as e:
-            logger.error(f"MongoDB connection failed: {e}")
-            is_atlas = settings.mongodb_url.startswith("mongodb+srv://")
-            hint = ""
-            if is_atlas:
-                hint = (
-                    " Atlas connection failed. Check: "
-                    "(1) Your IP is whitelisted in Atlas Network Access, "
-                    "(2) Credentials are correct, "
-                    "(3) Firewall allows outbound to port 27017, "
-                    "(4) Atlas cluster is running."
-                )
-            raise DatabaseConnectionError(
-                message=f"Unable to connect to database.{hint}",
-                details={"url": settings.mongodb_url.replace("//", "//***:***@") if "@" in settings.mongodb_url else settings.mongodb_url}
-            )
+
+        except ServerSelectionTimeoutError as e:
+            logger.critical(f"MongoDB connection timeout: {e}")
+            raise DatabaseConnectionError(f"Could not connect to MongoDB: {e}")
+        except Exception as e:
+            logger.critical(f"MongoDB connection failed: {e}")
+            raise DatabaseConnectionError(f"Database connection error: {e}")
 
     async def disconnect(self) -> None:
-        if self._client:
-            self._client.close()
-            self._client = None
-            self._db = None
-            logger.info("MongoDB disconnected")
+        """Close MongoDB connection."""
+        if self.client:
+            self.client.close()
+            logger.info("MongoDB connection closed")
+
+    async def is_healthy(self) -> bool:
+        """Check if database connection is alive."""
+        try:
+            if self.client is None:
+                return False
+            await self.client.admin.command("ping")
+            return True
+        except Exception:
+            return False
 
     async def _create_indexes(self) -> None:
-        await self._db.health_checks.create_index("timestamp", expireAfterSeconds=86400)
-        await self._db.health_checks.create_index([("check_type", 1), ("timestamp", -1)])
-
-        await self._db.customers.create_index("customer_number", unique=True)
-        await self._db.customers.create_index("phone")
-        await self._db.customers.create_index("email")
-        await self._db.customers.create_index("site_id")
-        await self._db.customers.create_index("status")
-
-        await self._db.services.create_index("customer_id")
-        await self._db.services.create_index("username", unique=True, sparse=True)
-        await self._db.services.create_index("site_id")
-
-        await self._db.subscriptions.create_index("customer_id")
-        await self._db.subscriptions.create_index("expiry_date")
-        await self._db.subscriptions.create_index("status")
-
-        await self._db.invoices.create_index("invoice_number", unique=True, sparse=True)
-        await self._db.invoices.create_index("customer_id")
-        await self._db.invoices.create_index("status")
-
-        await self._db.payments.create_index("transaction_reference", unique=True, sparse=True)
-        await self._db.payments.create_index("mpesa_receipt", unique=True, sparse=True)
-
-        await self._db.vouchers.create_index("code", unique=True, sparse=True)
-        await self._db.vouchers.create_index("batch_id")
-
-        await self._db.radius_sessions.create_index("session_id", unique=True, sparse=True)
-        await self._db.radius_sessions.create_index("username")
-        await self._db.radius_sessions.create_index("start_time")
-
-        await self._db.sites.create_index("site_code", unique=True, sparse=True)
-        await self._db.routers.create_index("hostname", unique=True, sparse=True)
-        await self._db.routers.create_index("site_id")
-
+        """Create all collection indexes upfront."""
+        for collection_name, indexes in INDEXES.items():
+            collection = self.db[collection_name]
+            for index in indexes:
+                try:
+                    keys = index.pop("keys")
+                    await collection.create_index(keys, **index)
+                except Exception as e:
+                    logger.warning(f"Index creation warning for {collection_name}: {e}")
         logger.info("Database indexes created/verified")
 
-    @property
-    def client(self) -> AsyncIOMotorClient:
-        if self._client is None:
-            raise DatabaseConnectionError(message="Database not connected")
-        return self._client
 
-    @property
-    def db(self) -> AsyncIOMotorDatabase:
-        if self._db is None:
-            raise DatabaseConnectionError(message="Database not connected")
-        return self._db
-
-    async def health_check(self) -> Dict:
-        try:
-            start = time.time()
-            await self._client.admin.command("ping")
-            latency_ms = (time.time() - start) * 1000
-            server_info = await self._client.server_info()
-            return {
-                "status": "healthy",
-                "latency_ms": round(latency_ms, 2),
-                "mongodb_version": server_info.get("version", "unknown"),
-                "database_name": settings.database_name
-            }
-        except Exception as e:
-            logger.error(f"DB health check failed: {e}")
-            return {"status": "unhealthy", "error": str(e), "database_name": settings.database_name}
-
-
+# Global database instance
 database = Database()
-
-async def get_database() -> AsyncIOMotorDatabase:
-    return database.db

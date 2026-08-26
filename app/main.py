@@ -201,10 +201,11 @@ def create_app() -> FastAPI:
         )
 
     # ── ROUTERS ──
-    from app.routes import auth
+    from app.routes import auth, customers
     from app.api.v1 import system
 
     app.include_router(auth.router)
+    app.include_router(customers.router)
     app.include_router(system.router)
 
     @app.get("/", tags=["Root"])

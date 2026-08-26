@@ -10,7 +10,7 @@ from app.core.database import database
 from app.core.exceptions import AuthenticationError, AuthorizationError
 from app.core.logging import get_logger
 from app.core.security import decode_token
-from app.models.user import Permission, UserInDB, UserRole, has_permission
+from app.models.user import Permission, UserInDB, UserRole, UserStatus, has_permission
 
 logger = get_logger(__name__)
 security_bearer = HTTPBearer(auto_error=False)
@@ -70,11 +70,13 @@ async def get_current_user(
     if not doc:
         raise AuthenticationError("User not found")
 
+    doc["_id"] = str(doc["_id"])
     user = UserInDB(**doc)
 
-    if user.status == UserRole.SUSPENDED:
+    # FIX: Use UserStatus not UserRole
+    if user.status == UserStatus.SUSPENDED:
         raise AuthenticationError("Account is suspended")
-    if user.status == UserRole.INACTIVE:
+    if user.status == UserStatus.INACTIVE:
         raise AuthenticationError("Account is inactive")
 
     # Attach user to request state for middleware/logging
