@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from app.core.database import get_database
+from app.core.database import database
 from app.core.security import get_current_user
 
 

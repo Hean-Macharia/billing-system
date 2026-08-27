@@ -1,6 +1,5 @@
-"""
-Application configuration using Pydantic Settings.
-Matches the user's .env file exactly: MONGODB_URL, JWT_SECRET_KEY, APP_VERSION.
+"""Application configuration using Pydantic Settings.
+Matches the user's .env file exactly: MONGODB_URL, JWT_SECRET_KEY, APP_VERSION, MPESA_*.
 """
 from typing import List, Optional
 from pydantic_settings import BaseSettings
@@ -17,17 +16,14 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False, alias="DEBUG")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # MongoDB - matches user's MONGODB_URL
-    mongodb_url: str = Field(
-        default="mongodb://localhost:27017",
-        alias="MONGODB_URL"
-    )
+    # MongoDB
+    mongodb_url: str = Field(default="mongodb://localhost:27017", alias="MONGODB_URL")
     database_name: str = Field(default="isp_billing", alias="DATABASE_NAME")
     mongodb_max_pool_size: int = Field(default=50, alias="MONGODB_MAX_POOL_SIZE")
     mongodb_min_pool_size: int = Field(default=10, alias="MONGODB_MIN_POOL_SIZE")
     mongodb_max_idle_time_ms: int = Field(default=60000, alias="MONGODB_MAX_IDLE_TIME_MS")
 
-    # JWT - matches user's JWT_SECRET_KEY
+    # JWT
     jwt_secret_key: str = Field(
         default="dev-jwt-secret-change-in-production-min-32-chars-long",
         alias="JWT_SECRET_KEY"
@@ -37,15 +33,12 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
     # RADIUS
-    radius_secret: str = Field(
-        default="dev-radius-secret-change-me",
-        alias="RADIUS_SECRET"
-    )
+    radius_secret: str = Field(default="dev-radius-secret-change-me", alias="RADIUS_SECRET")
     radius_host: str = Field(default="radius", alias="RADIUS_HOST")
     radius_auth_port: int = Field(default=1812, alias="RADIUS_AUTH_PORT")
     radius_acct_port: int = Field(default=1813, alias="RADIUS_ACCT_PORT")
 
-    # M-Pesa (prepared for Phase 5 - all optional for now)
+    # M-Pesa (Phase 5)
     mpesa_environment: str = Field(default="sandbox", alias="MPESA_ENVIRONMENT")
     mpesa_consumer_key: Optional[str] = Field(default=None, alias="MPESA_CONSUMER_KEY")
     mpesa_consumer_secret: Optional[str] = Field(default=None, alias="MPESA_CONSUMER_SECRET")

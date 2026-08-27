@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.core.database import get_database
+from app.core.database import database
 from app.core.security import get_current_user
 from app.models.package import package_document
 from app.schemas.package import (

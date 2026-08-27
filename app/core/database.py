@@ -21,6 +21,7 @@ COLLECTIONS = [
     "audit_logs",
     "sites",
     "routers",
+    "mpesa_transactions",   # ✅ added here
 ]
 
 # Indexes to create upfront for performance
@@ -92,6 +93,14 @@ INDEXES = {
         {"keys": [("ip_address", 1)], "unique": True},
         {"keys": [("site_id", 1)]},
         {"keys": [("status", 1)]},
+    ],
+    # ✅ New: M-Pesa transactions
+    "mpesa_transactions": [
+        {"keys": [("checkout_request_id", 1)], "unique": True, "sparse": True},
+        {"keys": [("customer_id", 1)]},
+        {"keys": [("invoice_id", 1)], "sparse": True},
+        {"keys": [("status", 1)]},
+        {"keys": [("created_at", -1)]},
     ],
 }
 

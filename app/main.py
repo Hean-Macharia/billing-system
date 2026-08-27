@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -173,6 +174,7 @@ def create_app() -> FastAPI:
 
     # ── ROUTERS ──
     from app.routes import auth, customers, services, subscriptions, invoices, payments
+    from app.routes import mpesa_routes   # ✅ import directly, avoid circular import
     from app.api.v1 import system
 
     app.include_router(auth.router)
@@ -181,6 +183,7 @@ def create_app() -> FastAPI:
     app.include_router(subscriptions.router)
     app.include_router(invoices.router)
     app.include_router(payments.router)
+    app.include_router(mpesa_routes.router)   # ✅ include router directly
     app.include_router(system.router)
 
     @app.get("/", tags=["Root"])
@@ -226,5 +229,4 @@ def create_app() -> FastAPI:
     return app
 
 
-from datetime import datetime, timezone
 app = create_app()

@@ -7,7 +7,8 @@ from app.schemas.customer import (
     AddressCreate, ContactPersonCreate, ServicePackageCreate,
 )
 from app.schemas.service import (
-    ServicePlanCreate, ServicePlanUpdate, ServicePlanResponse, ServiceFeatureCreate,
+    ServicePlanCreate, ServicePlanUpdate, ServicePlanResponse,
+    ServiceFeatureCreate,
 )
 from app.schemas.subscription import (
     SubscriptionCreate, SubscriptionUpdate, SubscriptionResponse,
@@ -17,4 +18,7 @@ from app.schemas.invoice import (
 )
 from app.schemas.payment import (
     PaymentCreate, PaymentUpdate, PaymentResponse,
+)
+from app.schemas.mpesa import (
+    StkPushRequest, StkCallbackBody, StkQueryRequest, MpesaTransactionResponse,
 )
