@@ -22,3 +22,11 @@ from app.schemas.payment import (
 from app.schemas.mpesa import (
     StkPushRequest, StkCallbackBody, StkQueryRequest, MpesaTransactionResponse,
 )
+from app.schemas.radius import (
+    NasClientCreate, NasClientUpdate, NasClientResponse,
+    RadiusUserCreate, RadiusUserUpdate, RadiusUserResponse,
+    RadiusSessionResponse, RadiusAccountingResponse,
+)
+from app.schemas.radius_auth import (
+    RadiusAuthRequest, RadiusAuthResponse, RadiusAccountingRequest,
+)

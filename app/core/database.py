@@ -76,6 +76,7 @@ INDEXES = {
         {"keys": [("nas_ip_address", 1)]},
         {"keys": [("start_time", -1)]},
         {"keys": [("status", 1)]},
+        {"keys": [("acct_session_id", 1)], "unique": True},   # ✅ added
     ],
     "audit_logs": [
         {"keys": [("user_id", 1)]},
@@ -94,13 +95,28 @@ INDEXES = {
         {"keys": [("site_id", 1)]},
         {"keys": [("status", 1)]},
     ],
-    # ✅ New: M-Pesa transactions
+    # ✅ M-Pesa transactions
     "mpesa_transactions": [
         {"keys": [("checkout_request_id", 1)], "unique": True, "sparse": True},
         {"keys": [("customer_id", 1)]},
         {"keys": [("invoice_id", 1)], "sparse": True},
         {"keys": [("status", 1)]},
         {"keys": [("created_at", -1)]},
+    ],
+    # ✅ RADIUS collections
+    "nas_clients": [
+        {"keys": [("ip_address", 1)], "unique": True},
+        {"keys": [("site_id", 1)]},
+    ],
+    "radius_users": [
+        {"keys": [("username", 1)], "unique": True},
+        {"keys": [("customer_id", 1)]},
+        {"keys": [("subscription_id", 1)]},
+    ],
+    "radius_accounting": [
+        {"keys": [("acct_session_id", 1)]},
+        {"keys": [("username", 1)]},
+        {"keys": [("nas_ip_address", 1)]},
     ],
 }
 

@@ -174,7 +174,10 @@ def create_app() -> FastAPI:
 
     # ── ROUTERS ──
     from app.routes import auth, customers, services, subscriptions, invoices, payments
-    from app.routes import mpesa_routes   # ✅ import directly, avoid circular import
+    from app.routes import mpesa
+    from app.routes import radius as radius_admin
+    from app.routes import radius_auth as radius_internal
+    from app.routes import sites
     from app.api.v1 import system
 
     app.include_router(auth.router)
@@ -183,7 +186,10 @@ def create_app() -> FastAPI:
     app.include_router(subscriptions.router)
     app.include_router(invoices.router)
     app.include_router(payments.router)
-    app.include_router(mpesa_routes.router)   # ✅ include router directly
+    app.include_router(mpesa.router)
+    app.include_router(radius_admin.router)
+    app.include_router(radius_internal.router)
+    app.include_router(sites.router)
     app.include_router(system.router)
 
     @app.get("/", tags=["Root"])
