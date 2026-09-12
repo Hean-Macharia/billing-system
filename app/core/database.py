@@ -1,6 +1,6 @@
 """Async MongoDB database connection using Motor."""
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from pymongo.errors import ServerSelectionTimeoutError
+from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
 
 from app.core.config import settings
 from app.core.exceptions import DatabaseConnectionError
@@ -8,7 +8,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Collections that will be used across the application
+# Collections used across the application
 COLLECTIONS = [
     "users",
     "customers",
@@ -21,10 +21,13 @@ COLLECTIONS = [
     "audit_logs",
     "sites",
     "routers",
-    "mpesa_transactions",   # ✅ added here
+    "mpesa_transactions",
+    "nas_clients",
+    "radius_users",
+    "radius_accounting",
 ]
 
-# Indexes to create upfront for performance
+# Index definitions
 INDEXES = {
     "users": [
         {"keys": [("email", 1)], "unique": True},
@@ -76,7 +79,7 @@ INDEXES = {
         {"keys": [("nas_ip_address", 1)]},
         {"keys": [("start_time", -1)]},
         {"keys": [("status", 1)]},
-        {"keys": [("acct_session_id", 1)], "unique": True},   # ✅ added
+        {"keys": [("acct_session_id", 1)], "unique": True},
     ],
     "audit_logs": [
         {"keys": [("user_id", 1)]},
@@ -94,8 +97,8 @@ INDEXES = {
         {"keys": [("ip_address", 1)], "unique": True},
         {"keys": [("site_id", 1)]},
         {"keys": [("status", 1)]},
+        {"keys": [("nas_client_id", 1)], "sparse": True},
     ],
-    # ✅ M-Pesa transactions
     "mpesa_transactions": [
         {"keys": [("checkout_request_id", 1)], "unique": True, "sparse": True},
         {"keys": [("customer_id", 1)]},
@@ -103,7 +106,6 @@ INDEXES = {
         {"keys": [("status", 1)]},
         {"keys": [("created_at", -1)]},
     ],
-    # ✅ RADIUS collections
     "nas_clients": [
         {"keys": [("ip_address", 1)], "unique": True},
         {"keys": [("site_id", 1)]},
@@ -125,8 +127,8 @@ class Database:
     """Singleton database manager."""
 
     def __init__(self):
-        self.client: AsyncIOMotorClient = None
-        self.db: AsyncIOMotorDatabase = None
+        self.client: AsyncIOMotorClient | None = None
+        self.db: AsyncIOMotorDatabase | None = None
 
     async def connect(self) -> None:
         """Establish MongoDB connection with pooling."""
@@ -144,10 +146,7 @@ class Database:
                 logger.info("Detected MongoDB Atlas connection - using extended timeouts")
                 connection_options["tls"] = True
 
-            self.client = AsyncIOMotorClient(
-                settings.mongodb_url,
-                **connection_options,
-            )
+            self.client = AsyncIOMotorClient(settings.mongodb_url, **connection_options)
             self.db = self.client[settings.database_name]
 
             # Verify connection
@@ -182,6 +181,13 @@ class Database:
 
     async def _create_indexes(self) -> None:
         """Create all collection indexes upfront."""
+        try:
+            await self.db.routers.drop_index("management_ip_1")
+            logger.info("Removed obsolete routers.management_ip_1 index")
+        except OperationFailure as exc:
+            if exc.code != 27:  # IndexNotFound
+                logger.warning(f"Legacy router index cleanup warning: {exc}")
+
         for collection_name, indexes in INDEXES.items():
             collection = self.db[collection_name]
             for index in indexes:

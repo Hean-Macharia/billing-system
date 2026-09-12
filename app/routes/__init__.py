@@ -7,4 +7,5 @@ from app.routes.payments import router as payments_router
 from app.routes.mpesa import router as mpesa_router
 from app.routes.radius import router as radius_router
 from app.routes.radius_auth import router as radius_auth_router
+from app.routes.routers import router as routers_router
 from app.routes import sites

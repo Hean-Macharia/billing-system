@@ -30,3 +30,6 @@ from app.schemas.radius import (
 from app.schemas.radius_auth import (
     RadiusAuthRequest, RadiusAuthResponse, RadiusAccountingRequest,
 )
+from app.schemas.router import (
+    RouterCreate, RouterUpdate, RouterResponse, RouterConnectivityResult,
+)

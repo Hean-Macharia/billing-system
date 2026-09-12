@@ -203,7 +203,7 @@ class CustomerService:
             raise NotFoundError("Customer not found")
 
         logger.info(f"Package assigned to customer {customer_id}")
-        return await self.get_by_id(customer_id)
+        return await self.get_by_id(acustomer_id)
 
     async def update_balance(self, customer_id: str, amount: float) -> CustomerInDB:
         """Update customer outstanding balance."""

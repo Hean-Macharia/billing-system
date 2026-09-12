@@ -177,6 +177,7 @@ def create_app() -> FastAPI:
     from app.routes import mpesa
     from app.routes import radius as radius_admin
     from app.routes import radius_auth as radius_internal
+    from app.routes import routers as routers_module
     from app.routes import sites
     from app.api.v1 import system
 
@@ -189,6 +190,7 @@ def create_app() -> FastAPI:
     app.include_router(mpesa.router)
     app.include_router(radius_admin.router)
     app.include_router(radius_internal.router)
+    app.include_router(routers_module.router)
     app.include_router(sites.router)
     app.include_router(system.router)
 

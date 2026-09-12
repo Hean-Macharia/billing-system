@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     cors_origins: List[str] = Field(default=["http://localhost:3000"], alias="CORS_ORIGINS")
     allowed_hosts: List[str] = Field(default=["localhost", "127.0.0.1"], alias="ALLOWED_HOSTS")
     rate_limit_per_minute: int = Field(default=100, alias="RATE_LIMIT_PER_MINUTE")
+    router_encryption_key: str = Field(default="", alias="ROUTER_ENCRYPTION_KEY")
+    timezone: str = Field(default="Africa/Nairobi", alias="TIMEZONE")
+    currency: str = Field(default="KES", alias="CURRENCY")
+    # Router credentials
+    router_username: str = Field(default="admin", alias="ROUTER_USERNAME")
+    router_password: str = Field(default="", alias="ROUTER_PASSWORD")
+
 
     @field_validator("cors_origins", mode="before")
     @classmethod

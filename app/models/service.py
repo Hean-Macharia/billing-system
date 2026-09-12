@@ -73,3 +73,35 @@ class ServicePlan(BaseModel):
 
 class ServicePlanInDB(ServicePlan):
     pass
+
+
+# ============================================================
+# ✅ ALIASES for compatibility with other imports
+# ============================================================
+Service = ServicePlan
+ServiceInDB = ServicePlanInDB
+
+
+# ============================================================
+# ✅ Additional model for simple service reference (if needed)
+# ============================================================
+class Service(BaseModel):
+    """Simple Service model for backward compatibility."""
+    id: Optional[ObjectIdStr] = Field(None, alias="_id")
+    name: str
+    description: Optional[str] = None
+    service_type: ServiceType = ServiceType.FTTH
+    status: ServiceStatus = ServiceStatus.ACTIVE
+    price: float = 0.0
+    setup_fee: float = 0.0
+    bandwidth: int = 0  # in Mbps (0 = unlimited)
+    validity_days: int = 30
+    features: List[str] = []
+    is_public: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}

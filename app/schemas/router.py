@@ -1,18 +1,21 @@
-from pydantic import BaseModel, Field
+"""Router (MikroTik NAS) schemas.
 
+These are re-exported from app.models.router, which is the single source
+of truth for RouterCreate/RouterUpdate/RouterResponse/RouterConnectivityResult
+(some environments' app/models/__init__.py import them from the models
+module directly, so they're defined there and mirrored here for callers
+that prefer the schemas import path).
+"""
+from app.models.router import (
+    RouterCreate,
+    RouterUpdate,
+    RouterResponse,
+    RouterConnectivityResult,
+)
 
-class RouterCreate(BaseModel):
-    name: str
-    host: str
-    username: str
-    password: str
-    port: int = Field(default=8728, gt=0, lt=65536)
-
-
-class RouterUpdate(BaseModel):
-    name: str | None = None
-    host: str | None = None
-    username: str | None = None
-    password: str | None = None
-    port: int | None = None
-    status: str | None = None
+__all__ = [
+    "RouterCreate",
+    "RouterUpdate",
+    "RouterResponse",
+    "RouterConnectivityResult",
+]
