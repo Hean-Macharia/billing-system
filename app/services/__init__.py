@@ -8,3 +8,5 @@ from app.services.mpesa_service import MpesaService
 from app.services.radius_admin_service import RadiusAdminService
 from app.services.radius_auth_service import RadiusAuthService
 from app.services.router_service import RouterService
+from app.services.voucher_service import VoucherService
+from app.services.hotspot_service import HotspotService

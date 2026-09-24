@@ -10,3 +10,5 @@ from app.models.payment import Payment, PaymentInDB, PaymentStatus, PaymentMetho
 from app.models.mpesa_transaction import MpesaTransaction, MpesaTransactionInDB, MpesaTransactionStatus
 from app.models.radius import NasClient, NasType, RadiusUser, RadiusUserType, RadiusAccounting, RadiusSession
 from app.models.router import Router, RouterApiType, RouterStatus
+from app.models.voucher import Voucher, VoucherBatch, VoucherStatus
+from app.models.hotspot import HotspotPlan

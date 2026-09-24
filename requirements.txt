@@ -22,3 +22,6 @@ gunicorn>=22.0.0
 # Phase 7: Router management
 routeros-api>=0.18.0
 cryptography>=42.0.0
+
+# Phase 8: Voucher printing
+reportlab>=4.0.0

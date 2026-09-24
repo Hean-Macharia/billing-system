@@ -7,7 +7,7 @@ e.g. RB951Ui-2HnD on 6.49.21) or the REST API (RouterOS 7+) based on the
 router's stored api_type.
 """
 from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -39,40 +39,40 @@ class RouterService:
         self.db = db
         self.collection = db.routers
 
+    # ------------------------------------------------------------------ #
+    # Serialization helpers
+    # ------------------------------------------------------------------ #
     def _serialize_router(self, doc: dict) -> Dict[str, Any]:
         """Convert MongoDB document to JSON-serializable dict."""
         if not doc:
             return None
-        
-        # Convert ObjectId to string
+
         if "_id" in doc and isinstance(doc["_id"], ObjectId):
             doc["_id"] = str(doc["_id"])
-        
-        # Convert any nested ObjectId fields
-        for key, value in doc.items():
+
+        for key, value in list(doc.items()):
             if isinstance(value, ObjectId):
                 doc[key] = str(value)
             elif isinstance(value, datetime):
                 doc[key] = value.isoformat()
-        
+
         return doc
 
     def _router_to_dict(self, router: Router) -> Dict[str, Any]:
         """Convert Router model to serializable dict."""
         if not router:
             return None
-        
+
         router_dict = router.model_dump(by_alias=True)
         if "_id" in router_dict and isinstance(router_dict["_id"], ObjectId):
             router_dict["_id"] = str(router_dict["_id"])
         if "id" in router_dict and isinstance(router_dict["id"], ObjectId):
             router_dict["id"] = str(router_dict["id"])
-        
-        # Convert datetime objects to ISO strings
+
         for key, value in router_dict.items():
             if isinstance(value, datetime):
                 router_dict[key] = value.isoformat()
-        
+
         return router_dict
 
     # ------------------------------------------------------------------ #
@@ -98,7 +98,7 @@ class RouterService:
         result = await self.collection.insert_one(doc)
         doc["_id"] = str(result.inserted_id)
         logger.info(f"Router registered: {data.name} @ {data.ip_address} ({data.api_type.value})")
-        
+
         return self._serialize_router(doc)
 
     async def get_router(self, router_id: str) -> Dict[str, Any]:
@@ -122,7 +122,7 @@ class RouterService:
         status: Optional[str] = None,
         page: int = 1,
         limit: int = 20,
-    ) -> tuple[List[Dict[str, Any]], int]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """List routers with pagination, returning serializable dicts."""
         query = {}
         if site_id:
@@ -163,8 +163,7 @@ class RouterService:
         result = await self.collection.update_one({"_id": oid}, {"$set": update_data})
         if result.matched_count == 0:
             raise NotFoundError("Router not found")
-        
-        # Get updated router and return as dict
+
         doc = await self.collection.find_one({"_id": oid})
         return self._serialize_router(doc)
 
@@ -183,7 +182,11 @@ class RouterService:
     # Client factory
     # ------------------------------------------------------------------ #
     def _is_legacy(self, router: dict) -> bool:
-        return router.get("api_type") == RouterApiType.LEGACY.value
+        """Return True if the router is configured for the legacy API."""
+        api_type = router.get("api_type")
+        if hasattr(api_type, "value"):
+            api_type = api_type.value
+        return api_type == RouterApiType.LEGACY.value
 
     def _legacy_client(self, router: dict) -> AsyncMikroTikLegacyClient:
         return AsyncMikroTikLegacyClient(
@@ -205,23 +208,63 @@ class RouterService:
             ssl_verify=bool(router.get("ssl_verify", False)),
         )
 
+    async def _resolve_client(self, router: dict) -> Tuple[Any, str]:
+        """
+        Return the correct MikroTik client for this router.
+
+        IMPORTANT: This function does NOT probe the connection. It picks the
+        client purely based on the router's stored `api_type`. If we probed
+        here, the probe would open and close the HTTP session on the REST
+        client, leaving it unusable for the actual call that follows
+        (`RuntimeError: Cannot send a request, as the client has been closed`).
+
+        Failure handling is done by the caller, which catches
+        MikroTikLegacyError / MikroTikRestError and returns a clean
+        {"reachable": False, ...} response.
+        """
+        api_type = router.get("api_type")
+        if hasattr(api_type, "value"):
+            api_type = api_type.value
+
+        if api_type == RouterApiType.LEGACY.value:
+            return self._legacy_client(router), RouterApiType.LEGACY.value
+
+        return self._rest_client(router), RouterApiType.REST.value
+
+    async def _close_client(self, client: Any, api_type: str) -> None:
+        """Close a client regardless of type."""
+        if api_type == RouterApiType.LEGACY.value:
+            if hasattr(client, "disconnect"):
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+            return
+        if hasattr(client, "close"):
+            try:
+                await client.close()
+            except Exception:
+                pass
+
     # ------------------------------------------------------------------ #
     # Connectivity
     # ------------------------------------------------------------------ #
     async def test_connectivity(self, router_id: str) -> Dict[str, Any]:
-        """Test connectivity to a router."""
+        """Test connectivity to a router (legacy or REST, based on api_type)."""
         router = await self._get_raw(router_id)
         checked_at = datetime.now(timezone.utc)
 
-        if self._is_legacy(router):
-            client = self._legacy_client(router)
-            reachable = await client.test_connection()
-        else:
-            client = self._rest_client(router)
-            try:
+        client, used_api = await self._resolve_client(router)
+        try:
+            if used_api == RouterApiType.LEGACY.value:
                 reachable = await client.test_connection()
-            finally:
-                await client.close()
+            else:
+                reachable = await client.test_connection()
+        except (MikroTikLegacyError, MikroTikRestError) as exc:
+            logger.warning(f"Connectivity test failed for {router['ip_address']}: {exc}")
+            reachable = False
+        finally:
+            await self._close_client(client, used_api)
 
         new_status = RouterStatus.ONLINE.value if reachable else RouterStatus.OFFLINE.value
         await self.collection.update_one(
@@ -231,7 +274,8 @@ class RouterService:
         return {
             "router_id": router_id,
             "reachable": reachable,
-            "api_type": router.get("api_type"),
+            "api_type": used_api,
+            "configured_api_type": router.get("api_type"),
             "checked_at": checked_at.isoformat(),
         }
 
@@ -239,9 +283,14 @@ class RouterService:
     # Health
     # ------------------------------------------------------------------ #
     async def refresh_health(self, router_id: str) -> Dict[str, Any]:
-        """Refresh router health metrics."""
+        """Refresh router health metrics (legacy or REST, based on api_type)."""
         router = await self._get_raw(router_id)
-        health = await self._refresh_health_legacy(router) if self._is_legacy(router) else await self._refresh_health_rest(router)
+
+        if self._is_legacy(router):
+            health = await self._refresh_health_legacy(router)
+        else:
+            health = await self._refresh_health_rest(router)
+
         health["checked_at"] = datetime.now(timezone.utc).isoformat()
 
         await self.collection.update_one(
@@ -275,9 +324,9 @@ class RouterService:
                     "router_id": router_id,
                     "name": doc.get("name"),
                     "online": result.get("reachable", False),
-                    "error": result.get("error") if not result.get("reachable") else None
+                    "error": result.get("error") if not result.get("reachable") else None,
                 })
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning(f"Health refresh failed for router {router_id}: {exc}")
                 offline += 1
                 checked += 1
@@ -285,13 +334,13 @@ class RouterService:
                     "router_id": router_id,
                     "name": doc.get("name"),
                     "online": False,
-                    "error": str(exc)
+                    "error": str(exc),
                 })
         return {
-            "checked": checked, 
-            "online": online, 
+            "checked": checked,
+            "online": online,
             "offline": offline,
-            "details": results
+            "details": results,
         }
 
     async def _refresh_health_legacy(self, router: dict) -> dict:
@@ -322,7 +371,7 @@ class RouterService:
             logger.warning(f"Legacy health check failed for {router['ip_address']}: {exc}")
             return {"reachable": False, "api_type": "legacy", "error": str(exc)}
         finally:
-            await client.disconnect()
+            await self._close_client(client, RouterApiType.LEGACY.value)
 
     async def _refresh_health_rest(self, router: dict) -> dict:
         client = self._rest_client(router)
@@ -342,127 +391,141 @@ class RouterService:
             logger.warning(f"REST health check failed for {router['ip_address']}: {exc}")
             return {"reachable": False, "api_type": "rest", "error": str(exc)}
         finally:
-            await client.close()
+            await self._close_client(client, RouterApiType.REST.value)
 
     # ------------------------------------------------------------------ #
     # Live data
     # ------------------------------------------------------------------ #
     async def get_interfaces(self, router_id: str) -> List[Dict[str, Any]]:
-        """Get router interfaces."""
+        """Get router interfaces (legacy or REST)."""
         router = await self._get_raw(router_id)
-        if self._is_legacy(router):
-            client = self._legacy_client(router)
-            try:
+        client, api_type = await self._resolve_client(router)
+        try:
+            if api_type == RouterApiType.LEGACY.value:
                 await client.connect()
                 raw = await client.get_interfaces()
                 return [normalize_interface(row) for row in raw]
-            finally:
-                await client.disconnect()
-
-        client = self._rest_client(router)
-        try:
             return await client.get_interfaces()
         finally:
-            await client.close()
+            await self._close_client(client, api_type)
 
     async def get_active_users(self, router_id: str) -> Dict[str, Any]:
-        """Get active PPPoE and HotSpot users."""
+        """Get active PPPoE and HotSpot users (legacy or REST)."""
         router = await self._get_raw(router_id)
-        if self._is_legacy(router):
-            client = self._legacy_client(router)
-            try:
+        client, api_type = await self._resolve_client(router)
+        try:
+            if api_type == RouterApiType.LEGACY.value:
                 await client.connect()
                 pppoe_raw = await client.get_active_pppoe()
                 hotspot_raw = await client.get_active_hotspot()
                 return {
+                    "api_type": "legacy",
                     "pppoe": normalize_active_pppoe(pppoe_raw),
                     "hotspot": normalize_active_hotspot(hotspot_raw),
                 }
-            finally:
-                await client.disconnect()
 
-        client = self._rest_client(router)
-        try:
             return {
+                "api_type": "rest",
                 "pppoe": await client.get_active_pppoe(),
                 "hotspot": await client.get_active_hotspot(),
             }
         finally:
-            await client.close()
+            await self._close_client(client, api_type)
+
+    async def get_active_hotspot_sessions(self, router_id: str) -> Dict[str, Any]:
+        """
+        Get ONLY active HotSpot sessions.
+        Used by /hotspot/routers/{router_id}/active-sessions.
+        """
+        router = await self._get_raw(router_id)
+        client, api_type = await self._resolve_client(router)
+        try:
+            if api_type == RouterApiType.LEGACY.value:
+                await client.connect()
+                hotspot_raw = await client.get_active_hotspot()
+                sessions = normalize_active_hotspot(hotspot_raw)
+                return {
+                    "api_type": "legacy",
+                    "router_id": router_id,
+                    "count": len(sessions),
+                    "sessions": sessions,
+                }
+
+            hotspot_raw = await client.get_active_hotspot()
+            sessions = hotspot_raw if isinstance(hotspot_raw, list) else []
+            return {
+                "api_type": "rest",
+                "router_id": router_id,
+                "count": len(sessions),
+                "sessions": sessions,
+            }
+        finally:
+            await self._close_client(client, api_type)
 
     async def get_dhcp_leases(self, router_id: str) -> List[Dict[str, Any]]:
-        """Get DHCP leases."""
+        """Get DHCP leases (legacy or REST)."""
         router = await self._get_raw(router_id)
-        if self._is_legacy(router):
-            client = self._legacy_client(router)
-            try:
+        client, api_type = await self._resolve_client(router)
+        try:
+            if api_type == RouterApiType.LEGACY.value:
                 await client.connect()
                 raw = await client.get_dhcp_leases()
                 return [normalize_dhcp_lease(row) for row in raw]
-            finally:
-                await client.disconnect()
-
-        client = self._rest_client(router)
-        try:
             return await client.get_dhcp_leases()
         finally:
-            await client.close()
+            await self._close_client(client, api_type)
 
     async def get_queues(self, router_id: str) -> List[Dict[str, Any]]:
-        """Get simple queues."""
+        """Get simple queues (legacy or REST)."""
         router = await self._get_raw(router_id)
-        if self._is_legacy(router):
-            client = self._legacy_client(router)
-            try:
+        client, api_type = await self._resolve_client(router)
+        try:
+            if api_type == RouterApiType.LEGACY.value:
                 await client.connect()
                 raw = await client.get_queues()
                 return [normalize_queue(row) for row in raw]
-            finally:
-                await client.disconnect()
-
-        client = self._rest_client(router)
-        try:
             return await client.get_queues()
         finally:
-            await client.close()
+            await self._close_client(client, api_type)
 
     # ------------------------------------------------------------------ #
-    # PPPoE provisioning (used by RADIUS sync / voucher redemption flows)
+    # PPPoE provisioning
     # ------------------------------------------------------------------ #
-    async def push_pppoe_user(self, router_id: str, username: str, password: str, profile: str = "default") -> Dict[str, Any]:
-        """Push PPPoE user to router."""
+    async def push_pppoe_user(
+        self,
+        router_id: str,
+        username: str,
+        password: str,
+        profile: str = "default",
+    ) -> Dict[str, Any]:
+        """Push PPPoE user to router (legacy or REST)."""
         router = await self._get_raw(router_id)
-        if self._is_legacy(router):
-            client = self._legacy_client(router)
-            try:
+        client, api_type = await self._resolve_client(router)
+        try:
+            if api_type == RouterApiType.LEGACY.value:
                 await client.connect()
-                await client.add_pppoe_user(username, password, profile)
-                return {"success": True, "username": username, "profile": profile}
-            finally:
-                await client.disconnect()
-        else:
-            client = self._rest_client(router)
-            try:
-                await client.add_pppoe_user(username, password, profile)
-                return {"success": True, "username": username, "profile": profile}
-            finally:
-                await client.close()
+            await client.add_pppoe_user(username, password, profile)
+            return {
+                "success": True,
+                "username": username,
+                "profile": profile,
+                "api_type": api_type,
+            }
+        finally:
+            await self._close_client(client, api_type)
 
     async def disconnect_pppoe_user(self, router_id: str, username: str) -> Dict[str, Any]:
-        """Disconnect PPPoE user session."""
+        """Disconnect PPPoE user session (legacy or REST)."""
         router = await self._get_raw(router_id)
-        if self._is_legacy(router):
-            client = self._legacy_client(router)
-            try:
+        client, api_type = await self._resolve_client(router)
+        try:
+            if api_type == RouterApiType.LEGACY.value:
                 await client.connect()
-                result = await client.disconnect_pppoe_session(username)
-                return {"username": username, "disconnected": result}
-            finally:
-                await client.disconnect()
-        else:
-            client = self._rest_client(router)
-            try:
-                result = await client.disconnect_pppoe_session(username)
-                return {"username": username, "disconnected": result}
-            finally:
-                await client.close()
+            result = await client.disconnect_pppoe_session(username)
+            return {
+                "username": username,
+                "disconnected": result,
+                "api_type": api_type,
+            }
+        finally:
+            await self._close_client(client, api_type)

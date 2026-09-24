@@ -33,3 +33,10 @@ from app.schemas.radius_auth import (
 from app.schemas.router import (
     RouterCreate, RouterUpdate, RouterResponse, RouterConnectivityResult,
 )
+from app.schemas.voucher import (
+    VoucherBatchCreate, VoucherActivateRequest, VoucherDisableRequest,
+    VoucherResponse, VoucherBatchResponse, VoucherPublicCheckResponse,
+)
+from app.schemas.hotspot import (
+    HotspotPlanCreate, HotspotPlanUpdate, HotspotPlanResponse,
+)

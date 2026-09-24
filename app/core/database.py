@@ -1,6 +1,6 @@
 """Async MongoDB database connection using Motor."""
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
+from pymongo.errors import ServerSelectionTimeoutError
 
 from app.core.config import settings
 from app.core.exceptions import DatabaseConnectionError
@@ -8,7 +8,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Collections used across the application
+# Collections that will be used across the application
 COLLECTIONS = [
     "users",
     "customers",
@@ -17,17 +17,16 @@ COLLECTIONS = [
     "invoices",
     "payments",
     "vouchers",
+    "voucher_batches",
+    "hotspot_plans",
     "radius_sessions",
     "audit_logs",
     "sites",
     "routers",
-    "mpesa_transactions",
-    "nas_clients",
-    "radius_users",
-    "radius_accounting",
+    "mpesa_transactions",   # ✅ added here
 ]
 
-# Index definitions
+# Indexes to create upfront for performance
 INDEXES = {
     "users": [
         {"keys": [("email", 1)], "unique": True},
@@ -70,16 +69,28 @@ INDEXES = {
         {"keys": [("created_at", -1)]},
     ],
     "vouchers": [
-        {"keys": [("code", 1)], "unique": True},
+        {"keys": [("voucher_code", 1)], "unique": True},
+        {"keys": [("batch_id", 1)]},
         {"keys": [("status", 1)]},
         {"keys": [("expiry_date", 1)]},
+        {"keys": [("site_id", 1)]},
+    ],
+    "voucher_batches": [
+        {"keys": [("batch_name", 1)]},
+        {"keys": [("site_id", 1)]},
+        {"keys": [("created_at", -1)]},
+    ],
+    "hotspot_plans": [
+        {"keys": [("site_id", 1)]},
+        {"keys": [("is_active", 1)]},
+        {"keys": [("sort_order", 1)]},
     ],
     "radius_sessions": [
         {"keys": [("username", 1)]},
         {"keys": [("nas_ip_address", 1)]},
         {"keys": [("start_time", -1)]},
         {"keys": [("status", 1)]},
-        {"keys": [("acct_session_id", 1)], "unique": True},
+        {"keys": [("acct_session_id", 1)], "unique": True},   # ✅ added
     ],
     "audit_logs": [
         {"keys": [("user_id", 1)]},
@@ -97,8 +108,8 @@ INDEXES = {
         {"keys": [("ip_address", 1)], "unique": True},
         {"keys": [("site_id", 1)]},
         {"keys": [("status", 1)]},
-        {"keys": [("nas_client_id", 1)], "sparse": True},
     ],
+    # ✅ M-Pesa transactions
     "mpesa_transactions": [
         {"keys": [("checkout_request_id", 1)], "unique": True, "sparse": True},
         {"keys": [("customer_id", 1)]},
@@ -106,6 +117,7 @@ INDEXES = {
         {"keys": [("status", 1)]},
         {"keys": [("created_at", -1)]},
     ],
+    # ✅ RADIUS collections
     "nas_clients": [
         {"keys": [("ip_address", 1)], "unique": True},
         {"keys": [("site_id", 1)]},
@@ -127,8 +139,8 @@ class Database:
     """Singleton database manager."""
 
     def __init__(self):
-        self.client: AsyncIOMotorClient | None = None
-        self.db: AsyncIOMotorDatabase | None = None
+        self.client: AsyncIOMotorClient = None
+        self.db: AsyncIOMotorDatabase = None
 
     async def connect(self) -> None:
         """Establish MongoDB connection with pooling."""
@@ -139,6 +151,15 @@ class Database:
                 "serverSelectionTimeoutMS": 30000,
                 "connectTimeoutMS": 30000,
                 "socketTimeoutMS": 30000,
+                # tz_aware=True makes every datetime Motor/pymongo reads back
+                # from MongoDB a timezone-aware UTC datetime instead of a
+                # naive one. Without this, any comparison against
+                # datetime.now(timezone.utc) anywhere in the app (voucher
+                # expiry checks, RADIUS auth's expiry check, subscription
+                # billing dates, etc.) raises TypeError the first time it
+                # runs against a real document instead of a freshly
+                # constructed in-memory one.
+                "tz_aware": True,
             }
 
             # Detect Atlas connection
@@ -146,7 +167,10 @@ class Database:
                 logger.info("Detected MongoDB Atlas connection - using extended timeouts")
                 connection_options["tls"] = True
 
-            self.client = AsyncIOMotorClient(settings.mongodb_url, **connection_options)
+            self.client = AsyncIOMotorClient(
+                settings.mongodb_url,
+                **connection_options,
+            )
             self.db = self.client[settings.database_name]
 
             # Verify connection
@@ -181,13 +205,6 @@ class Database:
 
     async def _create_indexes(self) -> None:
         """Create all collection indexes upfront."""
-        try:
-            await self.db.routers.drop_index("management_ip_1")
-            logger.info("Removed obsolete routers.management_ip_1 index")
-        except OperationFailure as exc:
-            if exc.code != 27:  # IndexNotFound
-                logger.warning(f"Legacy router index cleanup warning: {exc}")
-
         for collection_name, indexes in INDEXES.items():
             collection = self.db[collection_name]
             for index in indexes:

@@ -8,4 +8,6 @@ from app.routes.mpesa import router as mpesa_router
 from app.routes.radius import router as radius_router
 from app.routes.radius_auth import router as radius_auth_router
 from app.routes.routers import router as routers_router
+from app.routes.vouchers import router as vouchers_router
+from app.routes.hotspot import router as hotspot_router
 from app.routes import sites

@@ -1,93 +1,105 @@
-"""Voucher model for HotSpot and PPPoE voucher management."""
+"""Voucher (HotSpot prepaid code) and voucher batch models.
+
+Lifecycle:
+    GENERATED -> ACTIVE -> USED
+                    (or)-> EXPIRED
+                    (or)-> DISABLED  (any state except USED can be disabled)
+
+- GENERATED: created by a batch run, printed, but not yet sold/issued.
+  Not usable for auth (app.services.radius_auth_service._check_voucher
+  only ever matches status == "active"), so a stack of printed vouchers
+  sitting in a drawer never starts its validity countdown.
+- ACTIVE: an admin/agent activated it (typically at point of sale). Its
+  expiry_date is computed at that moment as now + duration/validity, and
+  it becomes usable for RADIUS HotSpot authentication immediately.
+- USED: consumed - set by app.services.radius_auth_service when a
+  customer authenticates with the voucher code as the RADIUS username.
+- EXPIRED: past its expiry_date and swept by VoucherService.expire_sweep()
+  (or lazily expired inline by the RADIUS auth check itself).
+- DISABLED: manually revoked (lost, refunded, printing error, etc).
+"""
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, Optional
+
 from bson import ObjectId
-from app.models.base import PyObjectId
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class VoucherStatus(str, Enum):
+    GENERATED = "generated"
     ACTIVE = "active"
     USED = "used"
     EXPIRED = "expired"
-    REVOKED = "revoked"
-    PENDING = "pending"
+    DISABLED = "disabled"
 
 
-class VoucherType(str, Enum):
-    HOTSPOT = "hotspot"
-    PPPOE = "pppoe"
-    BOTH = "both"
+class VoucherBatch(BaseModel):
+    """A single generation run - N vouchers sharing the same package/pricing."""
+    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+
+    id: Optional[str] = Field(alias="_id", default=None)
+    batch_name: str
+    site_id: Optional[str] = None
+    router_id: Optional[str] = None  # which MikroTik these are meant for (for printing/labeling)
+
+    quantity: int
+    code_prefix: str = ""
+    code_length: int = 10
+
+    duration_hours: Optional[float] = None       # validity once activated, e.g. 1, 24, 720
+    data_allowance_mb: Optional[int] = None       # None = unlimited data within duration
+    rate_limit: Optional[str] = None              # "upload/download" e.g. "5M/10M" (Mikrotik-Rate-Limit)
+    price: float = 0.0
+    currency: str = "KES"
+
+    activate_on_generation: bool = False  # if True, vouchers are created directly as ACTIVE
+    validity_days_after_generation: Optional[int] = None  # hard cutoff even if never activated (optional)
+
+    generated_count: int = 0
+    activated_count: int = 0
+    used_count: int = 0
+
+    created_by: Optional[str] = None  # user id
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Voucher(BaseModel):
-    """Voucher model for prepaid internet access."""
-    id: Optional[PyObjectId] = Field(default=None, alias="_id")
-    code: str = Field(..., description="Unique voucher code")
-    voucher_type: VoucherType = VoucherType.HOTSPOT
-    status: VoucherStatus = VoucherStatus.PENDING
-    customer_id: Optional[str] = None
-    service_id: Optional[str] = None
+    """A single prepaid HotSpot voucher code.
+
+    Field names intentionally match what
+    app.services.radius_auth_service.RadiusAuthService already reads/writes
+    against the `vouchers` collection (voucher_code, status, expiry_date,
+    duration_hours, data_allowance_mb, used_at, nas_ip, calling_station_id)
+    so RADIUS auth keeps working unmodified.
+    """
+    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+
+    id: Optional[str] = Field(alias="_id", default=None)
+    batch_id: Optional[str] = None
+    voucher_code: str = Field(..., min_length=4, max_length=32)
+
+    status: VoucherStatus = VoucherStatus.GENERATED
+
+    site_id: Optional[str] = None
     router_id: Optional[str] = None
-    
-    # Validity
-    validity_days: int = Field(default=30, ge=1)
-    data_limit_mb: Optional[int] = None  # None = unlimited
-    speed_limit_mbps: Optional[int] = None
-    
-    # Usage tracking
-    used_by: Optional[str] = None  # username or MAC address
+
+    duration_hours: Optional[float] = None
+    data_allowance_mb: Optional[int] = None
+    rate_limit: Optional[str] = None
+    price: float = 0.0
+    currency: str = "KES"
+
+    expiry_date: Optional[datetime] = None
+    activated_at: Optional[datetime] = None
+    activated_by: Optional[str] = None
     used_at: Optional[datetime] = None
-    data_used_mb: int = 0
-    
-    # Expiry
-    expires_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
-    # Metadata
-    batch_id: Optional[str] = None  # For bulk generation
-    created_by: Optional[str] = None
-    notes: Optional[str] = None
+    nas_ip: Optional[str] = None
+    calling_station_id: Optional[str] = None
+
+    printed: bool = False
+    printed_at: Optional[datetime] = None
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
-        json_encoders = {ObjectId: str}
-
-
-class VoucherCreate(BaseModel):
-    """Voucher creation schema."""
-    code: str
-    voucher_type: VoucherType = VoucherType.HOTSPOT
-    validity_days: int = 30
-    data_limit_mb: Optional[int] = None
-    speed_limit_mbps: Optional[int] = None
-    service_id: Optional[str] = None
-    router_id: Optional[str] = None
-    notes: Optional[str] = None
-
-
-class VoucherBatchCreate(BaseModel):
-    """Bulk voucher creation schema."""
-    count: int = Field(..., gt=0, le=1000)
-    voucher_type: VoucherType = VoucherType.HOTSPOT
-    validity_days: int = 30
-    data_limit_mb: Optional[int] = None
-    speed_limit_mbps: Optional[int] = None
-    service_id: Optional[str] = None
-    router_id: Optional[str] = None
-    notes: Optional[str] = None
-
-
-class VoucherUpdate(BaseModel):
-    """Voucher update schema."""
-    status: Optional[VoucherStatus] = None
-    customer_id: Optional[str] = None
-    notes: Optional[str] = None
-
-
-class VoucherInDB(Voucher):
-    """Voucher as stored in database."""
-    pass
