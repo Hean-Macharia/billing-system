@@ -17,6 +17,7 @@ from app.schemas.radius import (
     RadiusSessionResponse, RadiusAccountingResponse,
 )
 from app.services.radius_admin_service import RadiusAdminService
+from app.services.radius_auth_service import RadiusAuthService
 from app.utils.helpers import paginated_response, success_response
 
 logger = get_logger(__name__)
@@ -211,3 +212,45 @@ async def sync_user_from_subscription(
     service = RadiusAdminService(db)
     user = await service.sync_user_from_subscription(subscription_id)
     return success_response(message="RADIUS user synced from subscription", data=_user_to_response(user))
+
+
+# ── Sessions (admin/browser-facing - permission-gated, unlike the
+#    internal /radius_auth endpoints which are secret-gated for
+#    FreeRADIUS itself) ──
+
+@router.get("/sessions", response_model=dict)
+async def list_sessions(
+    request: Request,
+    site_id: Optional[str] = None,
+    nas_ip: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+    current_user: UserInDB = Depends(require_permission(Permission.RADIUS_READ)),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Currently online RADIUS sessions, for the frontend's Sessions page."""
+    service = RadiusAuthService(db)
+    sessions, total = await service.get_online_sessions(site_id=site_id, nas_ip=nas_ip, page=page, limit=limit)
+    return paginated_response(data=sessions, total=total, page=page, limit=limit)
+
+
+@router.post("/sessions/{session_id}/terminate", response_model=dict)
+async def terminate_session(
+    request: Request,
+    session_id: str,
+    current_user: UserInDB = Depends(require_permission(Permission.RADIUS_MANAGE)),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Admin-triggered disconnect, gated by user permission.
+
+    Named 'terminate' (not 'disconnect') to avoid colliding with
+    app.routes.radius_auth's POST /sessions/{session_id}/disconnect, which
+    is a *different* endpoint reserved for FreeRADIUS/internal systems and
+    gated by the X-RADIUS-Secret header instead of a user's JWT. Both are
+    mounted at the same /api/v1/radius prefix, so an identical path here
+    would have silently shadowed that one (this router registers first in
+    main.py) and broken FreeRADIUS-facing disconnects.
+    """
+    service = RadiusAuthService(db)
+    ok = await service.disconnect_session(session_id)
+    return success_response(message="Session marked for disconnect" if ok else "Session not found", data={"disconnected": ok})

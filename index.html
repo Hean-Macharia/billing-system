@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nyaururu Net — Ops Console</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><rect width=%2224%22 height=%2224%22 rx=%226%22 fill=%22%232DD4BF%22/><path d=%22M4 9.5a14 14 0 0116 0%22 stroke=%22%23063B36%22 stroke-width=%222%22 fill=%22none%22/><path d=%226 13a10 10 0 0112 0%22 stroke=%22%23063B36%22 stroke-width=%222%22 fill=%22none%22/><circle cx=%2212%22 cy=%2217%22 r=%221.6%22 fill=%22%23063B36%22/></svg>"/>
+<link rel="stylesheet" href="assets/css/design-system.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="app-root"></div>
+
+<!-- Core (order matters: ui.js defines helpers used everywhere else) -->
+<script src="assets/js/ui.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/router.js"></script>
+
+<!-- Pages -->
+<script src="assets/js/pages/_crud-factory.js"></script>
+<script src="assets/js/pages/login.js"></script>
+<script src="assets/js/pages/dashboard.js"></script>
+<script src="assets/js/pages/customers.js"></script>
+<script src="assets/js/pages/packages.js"></script>
+<script src="assets/js/pages/services.js"></script>
+<script src="assets/js/pages/subscriptions.js"></script>
+<script src="assets/js/pages/billing.js"></script>
+<script src="assets/js/pages/payments.js"></script>
+<script src="assets/js/pages/vouchers.js"></script>
+<script src="assets/js/pages/sites.js"></script>
+<script src="assets/js/pages/routers.js"></script>
+<script src="assets/js/pages/sessions.js"></script>
+<script src="assets/js/pages/reports.js"></script>
+
+<!-- Bootstrap (must load last) -->
+<script src="assets/js/app.js"></script>
+</body>
+</html>

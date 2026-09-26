@@ -107,14 +107,20 @@ def create_app() -> FastAPI:
     # Middleware
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestTimingMiddleware)
+
+    # Explicit CORS configuration
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=[
+            "http://localhost:5500",   # frontend dev server
+            "http://127.0.0.1:5500",   # alternate loopback
+        ],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["x-request-id"],
     )
+
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=settings.allowed_hosts,
@@ -180,6 +186,8 @@ def create_app() -> FastAPI:
     from app.routes import routers as routers_module
     from app.routes import vouchers as vouchers_module
     from app.routes import hotspot as hotspot_module
+    from app.routes import packages as packages_module
+    from app.routes import dashboard as dashboard_module
     from app.routes import sites
     from app.api.v1 import system
 
@@ -195,6 +203,8 @@ def create_app() -> FastAPI:
     app.include_router(routers_module.router)
     app.include_router(vouchers_module.router)
     app.include_router(hotspot_module.router)
+    app.include_router(packages_module.router)
+    app.include_router(dashboard_module.router)
     app.include_router(sites.router)
     app.include_router(system.router)
 
