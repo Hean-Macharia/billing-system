@@ -241,3 +241,33 @@ function statCard({ label, value, sub, accent = '' }) {
 function copyChip(text) {
   return `<span class="copy-code" onclick="navigator.clipboard.writeText('${escapeHtml(text)}');toast('Copied','success')">${escapeHtml(text)}${Icons.copy}</span>`;
 }
+
+/* Authenticated file download.
+   A plain <a href> to a permission-gated endpoint (like the voucher
+   CSV export/PDF print below) does NOT send the Authorization header —
+   browser-initiated navigation never attaches localStorage tokens — so
+   it would 401 in the real app despite looking fine in a quick click
+   test. Every protected download goes through this instead: fetch as
+   an authed blob, then trigger a save via a momentary object-URL link. */
+async function downloadAuthedFile(path, filename) {
+  try {
+    const res = await fetch(Api.downloadUrl(path), {
+      headers: Api.getAccessToken() ? { Authorization: `Bearer ${Api.getAccessToken()}` } : {},
+    });
+    if (!res.ok) {
+      let message = `Download failed (${res.status})`;
+      try { const body = await res.json(); message = body?.message || message; } catch (_) {}
+      throw new Error(message);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) {
+    toastError(e);
+  }
+}

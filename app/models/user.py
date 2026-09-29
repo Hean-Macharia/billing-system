@@ -74,6 +74,8 @@ class Permission:
     SETTINGS_READ = "settings.read"
     SETTINGS_UPDATE = "settings.update"
     AUDIT_READ = "audit.read"
+    SUPPORT_READ = "support.read"
+    SUPPORT_MANAGE = "support.manage"
 
 
 # Role-to-permissions mapping
@@ -93,6 +95,7 @@ ROLE_PERMISSIONS = {
         Permission.REPORTS_READ, Permission.REPORTS_CREATE,
         Permission.SETTINGS_READ, Permission.SETTINGS_UPDATE,
         Permission.AUDIT_READ,
+        Permission.SUPPORT_READ, Permission.SUPPORT_MANAGE,
     ],
     UserRole.BILLING_MANAGER: [
         Permission.CUSTOMERS_READ, Permission.CUSTOMERS_CREATE, Permission.CUSTOMERS_UPDATE,
@@ -128,6 +131,7 @@ ROLE_PERMISSIONS = {
         Permission.INVOICES_READ,
         Permission.PAYMENTS_READ,
         Permission.VOUCHERS_READ, Permission.VOUCHERS_UPDATE,
+        Permission.SUPPORT_READ, Permission.SUPPORT_MANAGE,
     ],
     UserRole.RESELLER: [
         Permission.CUSTOMERS_READ, Permission.CUSTOMERS_CREATE, Permission.CUSTOMERS_UPDATE,

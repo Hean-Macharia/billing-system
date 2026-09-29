@@ -51,14 +51,16 @@ Pages.vouchers = async function (root) {
             <div class="row-actions">
               <button class="btn btn-ghost btn-sm" data-act="view" data-id="${r._id}">View codes</button>
               <button class="btn btn-ghost btn-sm" data-act="activate" data-id="${r._id}" title="Activate all pending">${Icons.bolt}</button>
-              <a class="btn btn-ghost btn-sm" href="${Api.downloadUrl('/api/v1/vouchers/batches/' + r._id + '/export')}" target="_blank" title="Export CSV">${Icons.download}</a>
-              <a class="btn btn-ghost btn-sm" href="${Api.downloadUrl('/api/v1/vouchers/batches/' + r._id + '/print')}" target="_blank" title="Print PDF">${Icons.print}</a>
+              <button class="btn btn-ghost btn-sm" data-act="export" data-id="${r._id}" title="Export CSV">${Icons.download}</button>
+              <button class="btn btn-ghost btn-sm" data-act="print" data-id="${r._id}" title="Print PDF">${Icons.print}</button>
             </div>` },
         ],
         rows,
       });
       wrap.querySelectorAll('[data-act=view]').forEach(b => b.onclick = () => viewBatchVouchers(rows.find(r => r._id === b.dataset.id)));
       wrap.querySelectorAll('[data-act=activate]').forEach(b => b.onclick = () => activateBatch(b.dataset.id));
+      wrap.querySelectorAll('[data-act=export]').forEach(b => b.onclick = () => downloadAuthedFile(`/api/v1/vouchers/batches/${b.dataset.id}/export`, `voucher_batch_${b.dataset.id}.csv`));
+      wrap.querySelectorAll('[data-act=print]').forEach(b => b.onclick = () => downloadAuthedFile(`/api/v1/vouchers/batches/${b.dataset.id}/print`, `vouchers_${b.dataset.id}.pdf`));
 
       const pagerWrap = content.querySelector('#b-pager-wrap');
       pagerWrap.innerHTML = '';

@@ -40,3 +40,8 @@ from app.schemas.voucher import (
 from app.schemas.hotspot import (
     HotspotPlanCreate, HotspotPlanUpdate, HotspotPlanResponse,
 )
+from app.schemas.ticket import (
+    TicketCreate, TicketReply, TicketStatusUpdate, TicketAssign, TicketResponse,
+)
+from app.schemas.portal import PortalRegisterRequest, PortalStkPushRequest
+from app.schemas.site import SiteCreate, SiteUpdate, SiteResponse

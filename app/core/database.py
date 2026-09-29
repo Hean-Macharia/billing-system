@@ -19,6 +19,7 @@ COLLECTIONS = [
     "vouchers",
     "voucher_batches",
     "hotspot_plans",
+    "tickets",
     "radius_sessions",
     "audit_logs",
     "sites",
@@ -84,6 +85,13 @@ INDEXES = {
         {"keys": [("site_id", 1)]},
         {"keys": [("is_active", 1)]},
         {"keys": [("sort_order", 1)]},
+    ],
+    "tickets": [
+        {"keys": [("ticket_number", 1)], "unique": True},
+        {"keys": [("customer_id", 1)]},
+        {"keys": [("status", 1)]},
+        {"keys": [("assigned_to", 1)]},
+        {"keys": [("updated_at", -1)]},
     ],
     "radius_sessions": [
         {"keys": [("username", 1)]},

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from bson import ObjectId
+from bson.errors import InvalidId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -33,10 +34,16 @@ class PaymentService:
         if existing:
             raise ConflictError(f"Transaction '{txn_id}' already exists")
 
-        payment_doc = data.model_dump(exclude={"transaction_id"})
+        # ✅ Drop payment_date from the dump so we fully control it below
+        payment_doc = data.model_dump(exclude={"transaction_id", "payment_date"})
+
         payment_doc["transaction_id"] = txn_id
         payment_doc["customer_code"] = customer_doc.get("customer_code")
         payment_doc["customer_name"] = customer_doc.get("full_name")
+
+        # ✅ Always set payment_date to a real datetime
+        payment_doc["payment_date"] = data.payment_date or datetime.now(timezone.utc)
+
         payment_doc["status"] = PaymentStatus.PENDING.value
         payment_doc["currency"] = "KES"
         payment_doc["created_by"] = created_by
@@ -49,11 +56,11 @@ class PaymentService:
         return PaymentInDB(**payment_doc)
 
     async def get_by_id(self, payment_id: str) -> PaymentInDB:
-        from bson.errors import InvalidId
         try:
-            doc = await self.collection.find_one({"_id": ObjectId(payment_id)})
+            oid = ObjectId(payment_id)
         except InvalidId:
             raise NotFoundError("Invalid payment ID format")
+        doc = await self.collection.find_one({"_id": oid})
         if not doc:
             raise NotFoundError("Payment not found")
         doc["_id"] = str(doc["_id"])
@@ -67,9 +74,13 @@ class PaymentService:
         return PaymentInDB(**doc)
 
     async def list_payments(
-        self, customer_id: Optional[str] = None, invoice_id: Optional[str] = None,
-        status: Optional[str] = None, payment_method: Optional[str] = None,
-        page: int = 1, limit: int = 20,
+        self,
+        customer_id: Optional[str] = None,
+        invoice_id: Optional[str] = None,
+        status: Optional[str] = None,
+        payment_method: Optional[str] = None,
+        page: int = 1,
+        limit: int = 20,
     ) -> tuple[List[PaymentInDB], int]:
         query = {}
         if customer_id:
@@ -94,54 +105,87 @@ class PaymentService:
         if not update_data:
             raise ValidationError("No fields to update")
         update_data["updated_at"] = datetime.now(timezone.utc)
-        result = await self.collection.update_one({"_id": ObjectId(payment_id)}, {"$set": update_data})
+        try:
+            oid = ObjectId(payment_id)
+        except InvalidId:
+            raise NotFoundError("Invalid payment ID format")
+        result = await self.collection.update_one({"_id": oid}, {"$set": update_data})
         if result.matched_count == 0:
             raise NotFoundError("Payment not found")
         return await self.get_by_id(payment_id)
 
     async def confirm_payment(self, payment_id: str, invoice_id: Optional[str] = None) -> PaymentInDB:
         now = datetime.now(timezone.utc)
-        update = {"$set": {
-            "status": PaymentStatus.COMPLETED.value,
-            "confirmed_date": now, "updated_at": now,
-        }}
+        update = {
+            "$set": {
+                "status": PaymentStatus.COMPLETED.value,
+                "confirmed_date": now,
+                "updated_at": now,
+            }
+        }
         if invoice_id:
             update["$set"]["invoice_id"] = invoice_id
 
-        result = await self.collection.update_one({"_id": ObjectId(payment_id)}, update)
+        try:
+            oid = ObjectId(payment_id)
+        except InvalidId:
+            raise NotFoundError("Invalid payment ID format")
+
+        result = await self.collection.update_one({"_id": oid}, update)
         if result.matched_count == 0:
             raise NotFoundError("Payment not found")
 
         payment = await self.get_by_id(payment_id)
+
+        # Apply payment to invoice if linked
         if payment.invoice_id and payment.amount_kes > 0:
             from app.services.invoice_service import InvoiceService
             invoice_service = InvoiceService(self.db)
             await invoice_service.apply_payment(payment.invoice_id, payment_id, payment.amount_kes)
 
+        # Update subscription totals if linked
         if payment.subscription_id:
-            await self.db.subscriptions.update_one(
-                {"_id": ObjectId(payment.subscription_id)},
-                {"$inc": {"total_paid_kes": payment.amount_kes}, "$set": {"updated_at": now}},
-            )
+            try:
+                await self.db.subscriptions.update_one(
+                    {"_id": ObjectId(payment.subscription_id)},
+                    {
+                        "$inc": {"total_paid_kes": payment.amount_kes},
+                        "$set": {"updated_at": now},
+                    },
+                )
+            except InvalidId:
+                logger.warning(f"Invalid subscription_id on payment {payment_id}: {payment.subscription_id}")
+
         return payment
 
-    async def process_mpesa_callback(self, checkout_request_id: str, result_code: int,
-                                     result_desc: str, receipt_number: Optional[str] = None) -> PaymentInDB:
+    async def process_mpesa_callback(
+        self,
+        checkout_request_id: str,
+        result_code: int,
+        result_desc: str,
+        receipt_number: Optional[str] = None,
+    ) -> PaymentInDB:
         doc = await self.collection.find_one({"mpesa_checkout_request_id": checkout_request_id})
         if not doc:
             raise NotFoundError("Payment not found for this checkout request")
 
         payment_id = str(doc["_id"])
         status = PaymentStatus.COMPLETED.value if result_code == 0 else PaymentStatus.FAILED.value
-        update = {"$set": {
-            "status": status, "mpesa_result_code": result_code,
-            "mpesa_result_desc": result_desc, "mpesa_callback_received": True,
-            "updated_at": datetime.now(timezone.utc),
-        }}
+
+        update = {
+            "$set": {
+                "status": status,
+                "mpesa_result_code": result_code,
+                "mpesa_result_desc": result_desc,
+                "mpesa_callback_received": True,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        }
         if receipt_number:
             update["$set"]["mpesa_receipt_number"] = receipt_number
 
         await self.collection.update_one({"_id": ObjectId(payment_id)}, update)
+
         if result_code == 0:
             return await self.confirm_payment(payment_id)
         return await self.get_by_id(payment_id)

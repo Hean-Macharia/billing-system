@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Optional
 
 from bson import ObjectId
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
 from typing_extensions import Annotated
 
 ObjectIdStr = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, ObjectId) else v)]
@@ -69,6 +69,30 @@ class Payment(BaseModel):
     created_by: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # ─────────────────────────────────────────────────────────────
+    # Validators — handle legacy records with None dates
+    # ─────────────────────────────────────────────────────────────
+    @field_validator("payment_date", "created_at", "updated_at", mode="before")
+    @classmethod
+    def _ensure_datetime(cls, v):
+        """Coerce None to now() — handles legacy records with null dates."""
+        if v is None:
+            return datetime.now(timezone.utc)
+        return v
+
+    @field_validator(
+        "processed_date",
+        "confirmed_date",
+        "reconciled_at",
+        mode="before",
+    )
+    @classmethod
+    def _optional_datetime(cls, v):
+        """Optional datetimes — leave None as None, but accept strings too."""
+        if v is None:
+            return None
+        return v
 
     class Config:
         populate_by_name = True

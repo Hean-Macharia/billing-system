@@ -24,6 +24,22 @@ from app.utils.helpers import error_response
 logger = get_logger(__name__)
 
 
+# ──────────────────────────────────────────────────────────────
+# CORS origins — frontend on ports 5000 and 5001
+# ──────────────────────────────────────────────────────────────
+CORS_ORIGINS = [
+    # Frontend on port 5500
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+    # Frontend on port 5501
+    "http://localhost:5501",
+    "http://127.0.0.1:5501",
+    # LAN access (adjust the IP to your dev machine if needed)
+    "http://192.168.1.100:5000",
+    "http://192.168.1.100:5001",
+]
+
+
 class SecurityHeadersMiddleware:
     """Add security headers to all responses."""
     def __init__(self, app):
@@ -108,17 +124,17 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestTimingMiddleware)
 
-    # Explicit CORS configuration
+    # ──────────────────────────────────────────────────────
+    # CORS — allow frontend on 5000 and 5001
+    # ──────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5500",   # frontend dev server
-            "http://127.0.0.1:5500",   # alternate loopback
-        ],
+        allow_origins=CORS_ORIGINS,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
         expose_headers=["x-request-id"],
+        max_age=3600,
     )
 
     app.add_middleware(
@@ -186,6 +202,8 @@ def create_app() -> FastAPI:
     from app.routes import routers as routers_module
     from app.routes import vouchers as vouchers_module
     from app.routes import hotspot as hotspot_module
+    from app.routes import portal as portal_module
+    from app.routes import support as support_module
     from app.routes import packages as packages_module
     from app.routes import dashboard as dashboard_module
     from app.routes import sites
@@ -203,6 +221,8 @@ def create_app() -> FastAPI:
     app.include_router(routers_module.router)
     app.include_router(vouchers_module.router)
     app.include_router(hotspot_module.router)
+    app.include_router(portal_module.router)
+    app.include_router(support_module.router)
     app.include_router(packages_module.router)
     app.include_router(dashboard_module.router)
     app.include_router(sites.router)
