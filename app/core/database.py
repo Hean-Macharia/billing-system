@@ -20,6 +20,8 @@ COLLECTIONS = [
     "voucher_batches",
     "hotspot_plans",
     "tickets",
+    "notifications",
+    "automation_runs",
     "radius_sessions",
     "audit_logs",
     "sites",
@@ -93,11 +95,22 @@ INDEXES = {
         {"keys": [("assigned_to", 1)]},
         {"keys": [("updated_at", -1)]},
     ],
+    "notifications": [
+        {"keys": [("customer_id", 1)]},
+        {"keys": [("notification_type", 1)]},
+        {"keys": [("status", 1)]},
+        {"keys": [("created_at", -1)]},
+    ],
+    "automation_runs": [
+        {"keys": [("job_name", 1)]},
+        {"keys": [("ran_at", -1)]},
+    ],
     "radius_sessions": [
         {"keys": [("username", 1)]},
         {"keys": [("nas_ip_address", 1)]},
         {"keys": [("start_time", -1)]},
         {"keys": [("status", 1)]},
+        {"keys": [("customer_id", 1)]},
         {"keys": [("acct_session_id", 1)], "unique": True},   # ✅ added
     ],
     "audit_logs": [

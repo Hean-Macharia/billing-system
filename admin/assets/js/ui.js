@@ -91,6 +91,7 @@ function escapeHtml(s) {
 const STATUS_MAP = {
   active: 'good', online: 'good', paid: 'good', completed: 'good', confirmed: 'good', installed: 'good',
   pending: 'amber', partially_paid: 'amber', unpaid: 'amber', generated: 'amber', pending_disconnect: 'amber', pending_installation: 'amber',
+  sent: 'signal', viewed: 'signal', partial: 'amber',
   overdue: 'bad', expired: 'bad', disabled: 'bad', failed: 'bad', suspended: 'bad', cancelled: 'bad', offline: 'bad', inactive: 'muted',
   draft: 'muted', sent: 'signal', reversed: 'bad', refunded: 'muted', used: 'muted',
 };

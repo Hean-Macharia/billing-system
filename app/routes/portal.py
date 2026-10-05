@@ -101,6 +101,20 @@ async def portal_usage(days: int = 30, customer: dict = Depends(get_current_cust
 
 
 # ==================================================================== #
+# Notifications
+# ==================================================================== #
+
+@router.get("/notifications", response_model=dict)
+async def portal_notifications(
+    page: int = 1, limit: int = 20, customer: dict = Depends(get_current_customer), db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    from app.services.notification_service import NotificationService
+    service = NotificationService(db)
+    items, total = await service.list_for_customer(customer["_id"], page=page, limit=limit)
+    return paginated_response(data=[n.model_dump(by_alias=True) for n in items], total=total, page=page, limit=limit)
+
+
+# ==================================================================== #
 # Invoices
 # ==================================================================== #
 

@@ -21,12 +21,14 @@ class MpesaTransaction(BaseModel):
     model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
 
     id: Optional[str] = Field(alias="_id", default=None)
-    transaction_type: str = "stk_push"  # Future: c2b, b2c, etc.
+    transaction_type: str = "stk_push"  # "stk_push" (customer invoice payment) | "hotspot_purchase" (walk-up self-service)
     merchant_request_id: Optional[str] = None
     checkout_request_id: Optional[str] = None
-    customer_id: str
+    customer_id: Optional[str] = None  # None for hotspot_purchase - a walk-up buyer isn't a registered customer
     invoice_id: Optional[str] = None
     subscription_id: Optional[str] = None
+    hotspot_plan_id: Optional[str] = None  # set when transaction_type == "hotspot_purchase"
+    voucher_code: Optional[str] = None  # populated once a hotspot_purchase settles successfully
     amount: float = Field(..., gt=0)
     phone_number: str
     account_reference: str

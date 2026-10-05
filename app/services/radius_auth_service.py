@@ -84,7 +84,7 @@ class RadiusAuthService:
         if user.customer_id:
             customer = await self.customer_collection.find_one({"_id": ObjectId(user.customer_id)})
             if customer and customer.get("status") in ("suspended", "blocked"):
-                return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_message="Customer suspended")
+                return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Customer suspended")
 
         # 6. Check subscription status
         if user.subscription_id:
@@ -181,6 +181,19 @@ class RadiusAuthService:
         )
 
         reply = RadiusAuthResponse(control_Auth_Type="Accept")
+
+        # Bandwidth limit - was stored on the voucher at generation time
+        # but never actually sent to the router, so every voucher tier
+        # got unlimited speed regardless of what was purchased.
+        rate_limit = voucher.get("rate_limit")
+        if rate_limit:
+            reply.reply_Mikrotik_Rate_Limit = rate_limit
+
+        # Simultaneous device cap - same gap, voucher.max_devices was
+        # never wired to the RADIUS reply.
+        max_devices = voucher.get("max_devices")
+        if max_devices:
+            reply.reply_Simultaneous_Use = max_devices
 
         # Duration limit
         duration = voucher.get("duration_hours")

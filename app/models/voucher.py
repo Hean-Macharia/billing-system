@@ -50,6 +50,7 @@ class VoucherBatch(BaseModel):
     duration_hours: Optional[float] = None       # validity once activated, e.g. 1, 24, 720
     data_allowance_mb: Optional[int] = None       # None = unlimited data within duration
     rate_limit: Optional[str] = None              # "upload/download" e.g. "5M/10M" (Mikrotik-Rate-Limit)
+    max_devices: int = 1                           # "Simultaneous device use" cap
     price: float = 0.0
     currency: str = "KES"
 
@@ -88,6 +89,7 @@ class Voucher(BaseModel):
     duration_hours: Optional[float] = None
     data_allowance_mb: Optional[int] = None
     rate_limit: Optional[str] = None
+    max_devices: int = 1
     price: float = 0.0
     currency: str = "KES"
 

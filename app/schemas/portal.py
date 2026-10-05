@@ -21,3 +21,9 @@ class PortalRegisterRequest(BaseModel):
 class PortalStkPushRequest(BaseModel):
     invoice_id: str
     phone_number: str = Field(..., pattern=r"^254[0-9]{9}$", description="2547XXXXXXXX format")
+
+
+class HotspotPurchaseRequest(BaseModel):
+    """Walk-up self-service HotSpot voucher purchase - no customer account needed."""
+    plan_id: str
+    phone_number: str = Field(..., pattern=r"^254[0-9]{9}$", description="2547XXXXXXXX format")

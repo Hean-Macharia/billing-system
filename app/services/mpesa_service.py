@@ -214,8 +214,13 @@ class MpesaService:
         logger.info(f"Callback processed: {checkout_request_id} -> {status.value} (Receipt: {mpesa_receipt})")
 
         # ── SETTLEMENT: Payment -> Invoice -> Subscription ──
+        # (or, for a walk-up HotSpot buyer with no customer_id at all,
+        # voucher generation instead - see _settle_hotspot_purchase)
         if status == MpesaTransactionStatus.SUCCESS:
-            await self._settle_transaction(tx_id, doc, amount, mpesa_receipt, phone_number)
+            if doc.get("transaction_type") == "hotspot_purchase":
+                await self._settle_hotspot_purchase(tx_id, doc, amount, mpesa_receipt, phone_number)
+            else:
+                await self._settle_transaction(tx_id, doc, amount, mpesa_receipt, phone_number)
 
         return await self.get_by_id(tx_id)
 
@@ -272,13 +277,17 @@ class MpesaService:
                         {"$set": {"next_billing_date": next_bill}},
                     )
 
-            # 4. Update customer balance
+            # 4. Update customer balance. Does NOT blindly reactivate the
+            # customer here - a payment can settle one invoice while
+            # another stays unpaid, in which case they must stay
+            # suspended. AutomationService.try_restore_customer (called
+            # right after this method returns) is the single source of
+            # truth for whether restoration is actually warranted.
             await self.db.customers.update_one(
                 {"_id": ObjectId(customer_id)},
                 {
                     "$inc": {"total_paid_kes": amount},
                     "$set": {
-                        "status": "active",
                         "last_payment_date": datetime.now(timezone.utc),
                         "updated_at": datetime.now(timezone.utc),
                     },
@@ -298,6 +307,15 @@ class MpesaService:
             )
             logger.info(f"Transaction {tx_id} settled: Payment={payment.id}, Invoice={invoice_id}, Sub={subscription_id}")
 
+            # 6. Restore service if this payment cleared everything the
+            # customer owed (checks ALL their invoices, not just this
+            # one - see the note on step 4 above).
+            try:
+                from app.services.automation_service import AutomationService
+                await AutomationService(self.db).try_restore_customer(customer_id)
+            except Exception as restore_exc:  # noqa: BLE001
+                logger.warning(f"Post-payment restoration check failed for customer {customer_id}: {restore_exc}")
+
         except Exception as exc:
             logger.error(f"Settlement failed for tx {tx_id}: {exc}")
             await self.collection.update_one(
@@ -309,6 +327,108 @@ class MpesaService:
                         "updated_at": datetime.now(timezone.utc),
                     }
                 },
+            )
+
+    # ── HOTSPOT SELF-SERVICE PURCHASE (Phase 11) ──
+    #
+    # A walk-up HotSpot buyer scanning the captive portal isn't a
+    # registered Customer at all, so this deliberately does NOT reuse
+    # initiate_stk_push/_settle_transaction above (both hard-require a
+    # real customer_id and an invoice) - it's a parallel, self-contained
+    # path through the same mpesa_transactions collection, distinguished
+    # by transaction_type="hotspot_purchase" and dispatched to from
+    # process_callback.
+
+    async def initiate_hotspot_purchase(self, plan_id: str, phone_number: str) -> MpesaTransactionInDB:
+        plan = await self.db.hotspot_plans.find_one({"_id": ObjectId(plan_id)})
+        if not plan:
+            raise NotFoundError("HotSpot plan not found")
+        if not plan.get("is_active", True):
+            raise ValidationError("This plan is no longer available")
+
+        now = datetime.now(timezone.utc)
+        doc = {
+            "transaction_type": "hotspot_purchase",
+            "merchant_request_id": None, "checkout_request_id": None,
+            "customer_id": None, "invoice_id": None, "subscription_id": None,
+            "hotspot_plan_id": plan_id, "voucher_code": None,
+            "amount": plan["price"], "phone_number": phone_number,
+            "account_reference": plan["name"], "transaction_desc": f"HotSpot: {plan['name']}",
+            "status": MpesaTransactionStatus.PENDING.value,
+            "result_code": None, "result_desc": None,
+            "mpesa_receipt_number": None, "mpesa_transaction_date": None,
+            "callback_received": False, "callback_payload": None,
+            "payment_id": None, "settled": False, "settlement_error": None,
+            "created_at": now, "updated_at": now,
+        }
+        result = await self.collection.insert_one(doc)
+        doc["_id"] = str(result.inserted_id)
+        tx = MpesaTransactionInDB(**doc)
+
+        try:
+            resp = self.daraja.initiate_stk_push(
+                phone_number=phone_number, amount=plan["price"],
+                account_reference=plan["name"], transaction_desc=f"HotSpot: {plan['name']}",
+            )
+            await self.collection.update_one(
+                {"_id": ObjectId(tx.id)},
+                {"$set": {
+                    "merchant_request_id": resp.get("MerchantRequestID"),
+                    "checkout_request_id": resp.get("CheckoutRequestID"),
+                    "status": MpesaTransactionStatus.PROCESSING.value,
+                    "updated_at": datetime.now(timezone.utc),
+                }},
+            )
+            tx.merchant_request_id = resp.get("MerchantRequestID")
+            tx.checkout_request_id = resp.get("CheckoutRequestID")
+            tx.status = MpesaTransactionStatus.PROCESSING
+            logger.info(f"HotSpot purchase STK push initiated: {tx.checkout_request_id} for plan {plan['name']}")
+            return tx
+        except Exception as exc:
+            await self.collection.update_one(
+                {"_id": ObjectId(tx.id)},
+                {"$set": {"status": MpesaTransactionStatus.FAILED.value, "result_desc": str(exc), "updated_at": datetime.now(timezone.utc)}},
+            )
+            logger.error(f"HotSpot purchase STK push failed: {exc}")
+            raise ValidationError(f"Failed to initiate M-Pesa payment: {exc}")
+
+    async def _settle_hotspot_purchase(self, tx_id: str, doc: dict, amount: float, mpesa_receipt: Optional[str], phone_number: str) -> None:
+        """On successful payment: generate ONE active voucher from the
+        purchased plan and attach its code to the transaction so the
+        captive portal's status-poll endpoint can hand it back."""
+        try:
+            from app.models.notification import NotificationType
+            from app.schemas.voucher import VoucherBatchCreate
+            from app.services.notification_service import NotificationService
+            from app.services.voucher_service import VoucherService
+
+            plan_id = doc.get("hotspot_plan_id")
+            voucher_service = VoucherService(self.db)
+            batch = await voucher_service.create_batch(
+                VoucherBatchCreate(
+                    batch_name=f"HotSpot self-service purchase ({mpesa_receipt or tx_id})",
+                    quantity=1, plan_id=plan_id, activate_on_generation=True,
+                )
+            )
+            vouchers, _ = await voucher_service.list_vouchers(batch_id=batch.id, limit=1)
+            voucher_code = vouchers[0].voucher_code if vouchers else None
+
+            await self.collection.update_one(
+                {"_id": ObjectId(tx_id)},
+                {"$set": {"voucher_code": voucher_code, "settled": True, "updated_at": datetime.now(timezone.utc)}},
+            )
+
+            await NotificationService(self.db).notify(
+                subject="HotSpot voucher purchased",
+                body=f"Thank you for your payment of KES {amount:,.2f}. Your HotSpot code is {voucher_code}. Enjoy your connection!",
+                phone=phone_number, notification_type=NotificationType.VOUCHER_PURCHASED,
+            )
+            logger.info(f"HotSpot purchase settled: tx={tx_id} voucher={voucher_code}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"HotSpot purchase settlement failed for tx {tx_id}: {exc}")
+            await self.collection.update_one(
+                {"_id": ObjectId(tx_id)},
+                {"$set": {"settled": False, "settlement_error": str(exc), "updated_at": datetime.now(timezone.utc)}},
             )
 
     # ── QUERY & RECONCILIATION ──

@@ -8,6 +8,7 @@ from app.core.dependencies import get_db, require_permission
 from app.core.logging import get_logger
 from app.models.user import Permission, UserInDB
 from app.schemas.hotspot import HotspotPlanCreate, HotspotPlanUpdate
+from app.schemas.portal import HotspotPurchaseRequest
 from app.services.hotspot_service import HotspotService
 from app.utils.helpers import success_response
 
@@ -74,15 +75,48 @@ async def list_public_hotspot_plans(
         message="Available HotSpot plans",
         data=[
             {
+                "_id": str(p.id),  # the captive portal needs this to initiate a purchase - was missing entirely
                 "name": p.name,
                 "duration_hours": p.duration_hours,
                 "data_allowance_mb": p.data_allowance_mb,
+                "max_devices": p.max_devices,
+                "rate_limit": p.rate_limit,
                 "price": p.price,
                 "currency": p.currency,
                 "description": p.description,
             }
             for p in plans
         ],
+    )
+
+
+@router.post("/purchase", response_model=dict, status_code=201)
+async def purchase_hotspot_voucher(data: HotspotPurchaseRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Public, no-auth: a walk-up guest picks a plan on the captive
+    portal and pays directly - no customer account involved. Pairs with
+    GET /purchase/status/{checkout_request_id} for the frontend to poll
+    until the voucher is ready."""
+    from app.services.mpesa_service import MpesaService
+    service = MpesaService(db)
+    tx = await service.initiate_hotspot_purchase(plan_id=data.plan_id, phone_number=data.phone_number)
+    return success_response(
+        message="STK push sent - check your phone",
+        data={"checkout_request_id": tx.checkout_request_id},
+        status_code=201,
+    )
+
+
+@router.get("/purchase/status/{checkout_request_id}", response_model=dict)
+async def purchase_status(checkout_request_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Public, no-auth: the captive portal polls this after POST /purchase
+    until status is 'success' (voucher_code will be populated) or
+    'failed'/'cancelled'/'timeout'."""
+    from app.services.mpesa_service import MpesaService
+    service = MpesaService(db)
+    tx = await service.get_by_checkout_id(checkout_request_id)
+    return success_response(
+        message="Purchase status retrieved",
+        data={"status": tx.status.value, "voucher_code": tx.voucher_code, "result_desc": tx.result_desc},
     )
 
 

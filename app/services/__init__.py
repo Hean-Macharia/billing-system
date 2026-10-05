@@ -12,3 +12,5 @@ from app.services.voucher_service import VoucherService
 from app.services.hotspot_service import HotspotService
 from app.services.ticket_service import TicketService
 from app.services.portal_service import PortalService
+from app.services.notification_service import NotificationService
+from app.services.automation_service import AutomationService

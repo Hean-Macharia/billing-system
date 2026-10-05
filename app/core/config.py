@@ -40,6 +40,18 @@ class Settings(BaseSettings):
 
     # M-Pesa (Phase 5)
     mpesa_environment: str = Field(default="sandbox", alias="MPESA_ENVIRONMENT")
+
+    # Automation (Phase 11)
+    scheduler_enabled: bool = Field(default=True, alias="SCHEDULER_ENABLED")
+    billing_grace_period_days: int = Field(default=3, alias="BILLING_GRACE_PERIOD_DAYS")
+
+    # Notifications - always logged to the database regardless of these;
+    # SMS is only attempted if both are set, and any failure is caught and
+    # logged rather than raised (a notification failure must never break
+    # the billing/suspension flow that triggered it).
+    africas_talking_username: Optional[str] = Field(default=None, alias="AFRICAS_TALKING_USERNAME")
+    africas_talking_api_key: Optional[str] = Field(default=None, alias="AFRICAS_TALKING_API_KEY")
+    africas_talking_sender_id: Optional[str] = Field(default=None, alias="AFRICAS_TALKING_SENDER_ID")
     mpesa_consumer_key: Optional[str] = Field(default=None, alias="MPESA_CONSUMER_KEY")
     mpesa_consumer_secret: Optional[str] = Field(default=None, alias="MPESA_CONSUMER_SECRET")
     mpesa_shortcode: Optional[str] = Field(default=None, alias="MPESA_SHORTCODE")

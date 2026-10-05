@@ -11,8 +11,9 @@ Pages.billing = async function (root) {
         <div class="panel-toolbar">
           <select id="i-status" style="width:170px;">
             <option value="">Any status</option>
-            <option value="unpaid">Unpaid</option>
-            <option value="partially_paid">Partially paid</option>
+            <option value="sent">Sent</option>
+            <option value="viewed">Viewed</option>
+            <option value="partial">Partially paid</option>
             <option value="paid">Paid</option>
             <option value="overdue">Overdue</option>
             <option value="draft">Draft</option>

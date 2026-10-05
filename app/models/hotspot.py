@@ -28,6 +28,7 @@ class HotspotPlan(BaseModel):
     duration_hours: float
     data_allowance_mb: Optional[int] = None  # None = unlimited within duration
     rate_limit: Optional[str] = None  # "upload/download", e.g. "2M/5M"
+    max_devices: int = 1  # "Simultaneous device use" cap
     price: float = 0.0
     currency: str = "KES"
 

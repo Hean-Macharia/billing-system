@@ -12,3 +12,6 @@ from app.models.radius import NasClient, NasType, RadiusUser, RadiusUserType, Ra
 from app.models.router import Router, RouterApiType, RouterStatus
 from app.models.voucher import Voucher, VoucherBatch, VoucherStatus
 from app.models.hotspot import HotspotPlan
+from app.models.site import Site, SiteStatus
+from app.models.ticket import Ticket, TicketMessage, TicketStatus, TicketPriority, TicketCategory
+from app.models.notification import Notification, NotificationType, NotificationChannel, NotificationStatus

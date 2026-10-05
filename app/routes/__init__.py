@@ -12,4 +12,5 @@ from app.routes.vouchers import router as vouchers_router
 from app.routes.hotspot import router as hotspot_router
 from app.routes.portal import router as portal_router
 from app.routes.support import router as support_router
+from app.routes.automation import router as automation_router
 from app.routes import sites

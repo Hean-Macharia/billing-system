@@ -21,6 +21,7 @@ class VoucherBatchCreate(BaseModel):
     duration_hours: Optional[float] = Field(default=None, gt=0)
     data_allowance_mb: Optional[int] = Field(default=None, gt=0)
     rate_limit: Optional[str] = None
+    max_devices: int = Field(default=1, ge=1)
     price: float = 0.0
     currency: str = "KES"
 
@@ -46,6 +47,7 @@ class VoucherResponse(BaseModel):
     duration_hours: Optional[float] = None
     data_allowance_mb: Optional[int] = None
     rate_limit: Optional[str] = None
+    max_devices: int = 1
     price: float
     currency: str
     expiry_date: Optional[datetime] = None
@@ -65,6 +67,7 @@ class VoucherBatchResponse(BaseModel):
     duration_hours: Optional[float] = None
     data_allowance_mb: Optional[int] = None
     rate_limit: Optional[str] = None
+    max_devices: int = 1
     price: float
     currency: str
     activate_on_generation: bool

@@ -29,7 +29,7 @@ async def dashboard_summary(
     total_customers = await db.customers.count_documents({})
     service_plans = await db.service_plans.count_documents({"status": "active"})
     active_subscriptions = await db.subscriptions.count_documents({"status": "active"})
-    unpaid_invoices = await db.invoices.count_documents({"status": {"$in": ["unpaid", "partially_paid", "overdue"]}})
+    unpaid_invoices = await db.invoices.count_documents({"status": {"$in": ["sent", "viewed", "partial", "overdue"]}})
     overdue_invoices = await db.invoices.count_documents({"status": "overdue"})
 
     revenue_cursor = db.payments.aggregate([

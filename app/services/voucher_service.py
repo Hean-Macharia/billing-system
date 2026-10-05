@@ -48,6 +48,7 @@ class VoucherService:
         duration_hours = data.duration_hours
         data_allowance_mb = data.data_allowance_mb
         rate_limit = data.rate_limit
+        max_devices = data.max_devices
         price = data.price
         currency = data.currency
 
@@ -58,6 +59,7 @@ class VoucherService:
             duration_hours = duration_hours or plan.get("duration_hours")
             data_allowance_mb = data_allowance_mb or plan.get("data_allowance_mb")
             rate_limit = rate_limit or plan.get("rate_limit")
+            max_devices = max_devices or plan.get("max_devices", 1)
             price = price or plan.get("price", 0.0)
             currency = currency or plan.get("currency", "KES")
 
@@ -75,6 +77,7 @@ class VoucherService:
             "duration_hours": duration_hours,
             "data_allowance_mb": data_allowance_mb,
             "rate_limit": rate_limit,
+            "max_devices": max_devices,
             "price": price,
             "currency": currency,
             "activate_on_generation": data.activate_on_generation,
@@ -89,7 +92,7 @@ class VoucherService:
         batch_result = await self.batches.insert_one(batch_doc)
         batch_id = str(batch_result.inserted_id)
 
-        vouchers = self._build_voucher_docs(data, batch_id, now)
+        vouchers = self._build_voucher_docs(data, batch_id, now, duration_hours, data_allowance_mb, rate_limit, max_devices, price, currency)
         inserted = await self._insert_with_retry(vouchers, data.code_length, data.code_prefix)
 
         activated_count = sum(1 for v in inserted if v["status"] == VoucherStatus.ACTIVE.value)
@@ -104,11 +107,19 @@ class VoucherService:
         batch_doc["activated_count"] = activated_count
         return VoucherBatch(**batch_doc)
 
-    def _build_voucher_docs(self, data: VoucherBatchCreate, batch_id: str, now: datetime) -> List[dict]:
+    def _build_voucher_docs(
+        self, data: VoucherBatchCreate, batch_id: str, now: datetime,
+        duration_hours, data_allowance_mb, rate_limit, max_devices, price, currency,
+    ) -> List[dict]:
+        """Takes the plan-resolved values from create_batch (not data.* directly) -
+        a voucher batch created via plan_id alone, with no explicit
+        duration/rate_limit/price in the request body, would otherwise
+        write None for all of them onto every individual voucher even
+        though the batch summary record looked correct."""
         activate_now = data.activate_on_generation
         expiry_date = None
         if activate_now:
-            expiry_date = now + timedelta(hours=data.duration_hours) if data.duration_hours else None
+            expiry_date = now + timedelta(hours=duration_hours) if duration_hours else None
         elif data.validity_days_after_generation:
             # Hard cutoff even if never activated/sold - common for "must be redeemed within 30 days".
             expiry_date = now + timedelta(days=data.validity_days_after_generation)
@@ -122,11 +133,12 @@ class VoucherService:
                     "status": (VoucherStatus.ACTIVE if activate_now else VoucherStatus.GENERATED).value,
                     "site_id": data.site_id,
                     "router_id": data.router_id,
-                    "duration_hours": data.duration_hours,
-                    "data_allowance_mb": data.data_allowance_mb,
-                    "rate_limit": data.rate_limit,
-                    "price": data.price,
-                    "currency": data.currency,
+                    "duration_hours": duration_hours,
+                    "data_allowance_mb": data_allowance_mb,
+                    "rate_limit": rate_limit,
+                    "max_devices": max_devices,
+                    "price": price,
+                    "currency": currency,
                     "expiry_date": expiry_date,
                     "activated_at": now if activate_now else None,
                     "activated_by": None,

@@ -94,7 +94,7 @@ class PortalService:
         if subscription and subscription.get("plan_id"):
             plan = await self.db.service_plans.find_one({"_id": ObjectId(subscription["plan_id"])})
 
-        unpaid_cursor = self.db.invoices.find({"customer_id": customer_id, "status": {"$in": ["unpaid", "partially_paid", "overdue"]}})
+        unpaid_cursor = self.db.invoices.find({"customer_id": customer_id, "status": {"$in": ["sent", "viewed", "partial", "overdue"]}})
         balance_due = 0.0
         overdue_count = 0
         async for inv in unpaid_cursor:

@@ -24,22 +24,6 @@ from app.utils.helpers import error_response
 logger = get_logger(__name__)
 
 
-# ──────────────────────────────────────────────────────────────
-# CORS origins — frontend on ports 5000 and 5001
-# ──────────────────────────────────────────────────────────────
-CORS_ORIGINS = [
-    # Frontend on port 5500
-    "http://localhost:5500",
-    "http://127.0.0.1:5500",
-    # Frontend on port 5501
-    "http://localhost:5501",
-    "http://127.0.0.1:5501",
-    # LAN access (adjust the IP to your dev machine if needed)
-    "http://192.168.1.100:5000",
-    "http://192.168.1.100:5001",
-]
-
-
 class SecurityHeadersMiddleware:
     """Add security headers to all responses."""
     def __init__(self, app):
@@ -99,18 +83,30 @@ async def lifespan(app: FastAPI):
     setup_logging()
     try:
         await database.connect()
+        from app.core.scheduler import start_scheduler
+        start_scheduler()
         logger.info("Application startup complete")
         yield
     except Exception as e:
         logger.critical(f"Startup failed: {e}")
         raise
     finally:
+        from app.core.scheduler import stop_scheduler
+        stop_scheduler()
         await database.disconnect()
         logger.info("Application shutdown complete")
 
 
 def create_app() -> FastAPI:
     """Application factory."""
+    cors_origins = list(settings.cors_origins)
+    if settings.app_env == "development":
+        cors_origins.extend(
+            f"http://{host}:{port}"
+            for host in ("localhost", "127.0.0.1")
+            for port in (5500, 5501, 5502)
+        )
+
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
@@ -123,20 +119,14 @@ def create_app() -> FastAPI:
     # Middleware
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestTimingMiddleware)
-
-    # ──────────────────────────────────────────────────────
-    # CORS — allow frontend on 5000 and 5001
-    # ──────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=CORS_ORIGINS,
+        allow_origins=list(dict.fromkeys(cors_origins)),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
         expose_headers=["x-request-id"],
-        max_age=3600,
     )
-
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=settings.allowed_hosts,
@@ -204,6 +194,7 @@ def create_app() -> FastAPI:
     from app.routes import hotspot as hotspot_module
     from app.routes import portal as portal_module
     from app.routes import support as support_module
+    from app.routes import automation as automation_module
     from app.routes import packages as packages_module
     from app.routes import dashboard as dashboard_module
     from app.routes import sites
@@ -223,6 +214,7 @@ def create_app() -> FastAPI:
     app.include_router(hotspot_module.router)
     app.include_router(portal_module.router)
     app.include_router(support_module.router)
+    app.include_router(automation_module.router)
     app.include_router(packages_module.router)
     app.include_router(dashboard_module.router)
     app.include_router(sites.router)

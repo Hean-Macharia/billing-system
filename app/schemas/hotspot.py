@@ -11,6 +11,7 @@ class HotspotPlanCreate(BaseModel):
     duration_hours: float = Field(..., gt=0)
     data_allowance_mb: Optional[int] = Field(default=None, gt=0)
     rate_limit: Optional[str] = None
+    max_devices: int = Field(default=1, ge=1)
     price: float = 0.0
     currency: str = "KES"
     description: Optional[str] = None
@@ -24,6 +25,7 @@ class HotspotPlanUpdate(BaseModel):
     duration_hours: Optional[float] = Field(default=None, gt=0)
     data_allowance_mb: Optional[int] = None
     rate_limit: Optional[str] = None
+    max_devices: Optional[int] = Field(default=None, ge=1)
     price: Optional[float] = None
     currency: Optional[str] = None
     description: Optional[str] = None
@@ -38,6 +40,7 @@ class HotspotPlanResponse(BaseModel):
     duration_hours: float
     data_allowance_mb: Optional[int] = None
     rate_limit: Optional[str] = None
+    max_devices: int = 1
     price: float
     currency: str
     description: Optional[str] = None

@@ -27,6 +27,7 @@ function fmtDateTime(v) { if (!v) return '—'; const d = new Date(v); return is
 const STATUS_MAP = {
   active: 'good', online: 'good', paid: 'good', completed: 'good', open: 'signal', resolved: 'good',
   pending: 'amber', partially_paid: 'amber', unpaid: 'amber', closed: 'muted',
+  sent: 'signal', viewed: 'signal', partial: 'amber',
   overdue: 'bad', expired: 'bad', failed: 'bad', suspended: 'bad', cancelled: 'bad', offline: 'muted',
 };
 function statusBadge(status) {

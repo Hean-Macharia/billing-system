@@ -76,6 +76,8 @@ class Permission:
     AUDIT_READ = "audit.read"
     SUPPORT_READ = "support.read"
     SUPPORT_MANAGE = "support.manage"
+    AUTOMATION_READ = "automation.read"
+    AUTOMATION_MANAGE = "automation.manage"
 
 
 # Role-to-permissions mapping
@@ -96,6 +98,7 @@ ROLE_PERMISSIONS = {
         Permission.SETTINGS_READ, Permission.SETTINGS_UPDATE,
         Permission.AUDIT_READ,
         Permission.SUPPORT_READ, Permission.SUPPORT_MANAGE,
+        Permission.AUTOMATION_READ, Permission.AUTOMATION_MANAGE,
     ],
     UserRole.BILLING_MANAGER: [
         Permission.CUSTOMERS_READ, Permission.CUSTOMERS_CREATE, Permission.CUSTOMERS_UPDATE,

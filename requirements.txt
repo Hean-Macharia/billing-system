@@ -25,3 +25,6 @@ cryptography>=42.0.0
 
 # Phase 8: Voucher printing
 reportlab>=4.0.0
+
+# Phase 11: Scheduled automation
+apscheduler>=3.10.0
