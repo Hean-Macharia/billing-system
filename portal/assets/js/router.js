@@ -18,7 +18,7 @@ const Router = (() => {
     const tabsHtml = TABS.map(t => `<a class="${activeBase === t.path ? 'active' : ''}" href="${t.path}">${Icons[t.icon]}<span>${t.label}</span></a>`).join('');
     return `
       <header class="topbar">
-        <div class="brand"><div class="mark">${Icons.wifi}</div>Nyaururu Net</div>
+        <div class="brand"><div class="mark">${Icons.wifi}</div>DEVZEN CREATIONS</div>
         <div class="topbar-right">
           <span class="topbar-name">${escapeHtml(profile?.full_name || '')}</span>
           <button class="icon-btn" id="portal-logout" style="background:rgba(255,255,255,.1);color:#fff;" title="Sign out">${Icons.logout}</button>

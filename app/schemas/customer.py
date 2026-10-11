@@ -129,8 +129,7 @@ class CustomerResponse(BaseModel):
     last_billed_at: Optional[datetime] = None
     last_payment_at: Optional[datetime] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = {"populate_by_name": True}
 
 
 class CustomerListResponse(BaseModel):
@@ -146,5 +145,4 @@ class CustomerListResponse(BaseModel):
     outstanding_balance: float
     created_at: datetime
 
-    class Config:
-        populate_by_name = True
+    model_config = {"populate_by_name": True}

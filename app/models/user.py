@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, List, Optional
 
 from bson import ObjectId
-from pydantic import BaseModel, BeforeValidator, EmailStr, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, field_validator
 from typing_extensions import Annotated
 
 
@@ -179,9 +179,7 @@ class User(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
-        json_encoders = {datetime: lambda v: v.isoformat(), ObjectId: lambda v: str(v)}
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class UserInDB(User):

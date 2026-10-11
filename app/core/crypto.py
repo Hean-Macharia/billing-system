@@ -1,13 +1,14 @@
 """Symmetric encryption helpers for credentials stored at rest (router
 passwords, RADIUS shared secrets, etc).
 
-Uses Fernet (AES-128-CBC + HMAC). If ROUTER_ENCRYPTION_KEY is not set in
-the environment, a key is deterministically derived from JWT_SECRET_KEY so
-local/dev environments work out of the box. Set ROUTER_ENCRYPTION_KEY
-explicitly in production so credentials survive a JWT secret rotation.
+Uses Fernet (AES-128-CBC + HMAC). In local development, generate a per-process
+key when one is not configured so we don't ship any hardcoded secret defaults.
+Set ROUTER_ENCRYPTION_KEY explicitly in production so credentials survive a JWT
+secret rotation.
 """
 import base64
 import hashlib
+import secrets
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -15,7 +16,7 @@ from app.core.config import settings
 
 
 def _derive_key() -> bytes:
-    raw = settings.router_encryption_key
+    raw = (settings.router_encryption_key or "").strip()
     if raw:
         candidate = raw.encode()
         try:
@@ -28,8 +29,12 @@ def _derive_key() -> bytes:
         digest = hashlib.sha256(candidate).digest()
         return base64.urlsafe_b64encode(digest)
 
-    # Dev fallback - deterministic, but should not be relied on in production
-    digest = hashlib.sha256(f"router-encryption::{settings.jwt_secret_key}".encode()).digest()
+    if settings.app_env.lower() in {"production", "prod"}:
+        raise RuntimeError("ROUTER_ENCRYPTION_KEY is required in production")
+
+    generated = secrets.token_urlsafe(32)
+    settings.router_encryption_key = generated
+    digest = hashlib.sha256(generated.encode()).digest()
     return base64.urlsafe_b64encode(digest)
 
 

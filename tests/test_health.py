@@ -2,11 +2,12 @@
 Phase 1 tests: Health endpoints, security headers, CORS, response format.
 """
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -15,18 +16,22 @@ async def client():
 
 class TestRootEndpoint:
     @pytest.mark.asyncio
-    async def test_root_returns_success(self, client):
+    async def test_root_redirects_to_hotspot(self, client):
         response = await client.get("/")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert "ISP Billing" in data["message"]
+        assert response.status_code == 307
+        assert response.headers["location"] == "/hotspot/"
 
     @pytest.mark.asyncio
-    async def test_root_has_health_link(self, client):
-        response = await client.get("/")
-        data = response.json()
-        assert "/health" in str(data)
+    async def test_frontend_routes_serve_static_apps(self, client):
+        for path, marker in (
+            ("/hotspot/", "DEVZEN CREATIONS"),
+            ("/admin/", "DEVZEN CREATIONS"),
+            ("/portal/", "DEVZEN CREATIONS"),
+        ):
+            response = await client.get(path)
+            assert response.status_code == 200
+            assert marker in response.text
+            assert "content-security-policy" not in response.headers
 
 
 class TestHealthEndpoints:
@@ -82,7 +87,7 @@ class TestSystemInfo:
 class TestSecurityHeaders:
     @pytest.mark.asyncio
     async def test_security_headers_present(self, client):
-        response = await client.get("/")
+        response = await client.get("/health")
         headers = response.headers
         assert headers.get("x-content-type-options") == "nosniff"
         assert headers.get("x-frame-options") == "DENY"

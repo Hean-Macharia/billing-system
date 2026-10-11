@@ -339,7 +339,9 @@ class MpesaService:
     # by transaction_type="hotspot_purchase" and dispatched to from
     # process_callback.
 
-    async def initiate_hotspot_purchase(self, plan_id: str, phone_number: str) -> MpesaTransactionInDB:
+    async def initiate_hotspot_purchase(
+        self, plan_id: str, phone_number: str, device_type: str, device_mac: str
+    ) -> MpesaTransactionInDB:
         plan = await self.db.hotspot_plans.find_one({"_id": ObjectId(plan_id)})
         if not plan:
             raise NotFoundError("HotSpot plan not found")
@@ -352,6 +354,7 @@ class MpesaService:
             "merchant_request_id": None, "checkout_request_id": None,
             "customer_id": None, "invoice_id": None, "subscription_id": None,
             "hotspot_plan_id": plan_id, "voucher_code": None,
+            "device_type": device_type, "device_mac": device_mac.replace("-", ":").upper(),
             "amount": plan["price"], "phone_number": phone_number,
             "account_reference": plan["name"], "transaction_desc": f"HotSpot: {plan['name']}",
             "status": MpesaTransactionStatus.PENDING.value,
@@ -412,6 +415,14 @@ class MpesaService:
             )
             vouchers, _ = await voucher_service.list_vouchers(batch_id=batch.id, limit=1)
             voucher_code = vouchers[0].voucher_code if vouchers else None
+            if voucher_code and doc.get("device_mac"):
+                await self.db.vouchers.update_one(
+                    {"voucher_code": voucher_code},
+                    {"$set": {
+                        "bound_mac": doc["device_mac"],
+                        "device_type": doc.get("device_type"),
+                    }},
+                )
 
             await self.collection.update_one(
                 {"_id": ObjectId(tx_id)},

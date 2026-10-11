@@ -56,5 +56,4 @@ class InvoiceResponse(BaseModel):
     email_sent: bool
     sms_sent: bool
 
-    class Config:
-        populate_by_name = True
+    model_config = {"populate_by_name": True}

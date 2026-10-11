@@ -4,7 +4,7 @@ from enum import Enum
 from typing import List, Optional
 
 from bson import ObjectId
-from pydantic import BaseModel, BeforeValidator, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from typing_extensions import Annotated
 
 ObjectIdStr = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, ObjectId) else v)]
@@ -17,11 +17,35 @@ class ServiceStatus(str, Enum):
 
 
 class ServiceType(str, Enum):
+    INTERNET = "internet"
+    BROADBAND = "broadband"
     FTTH = "ftth"
     FTTB = "fttb"
     WIRELESS = "wireless"
     VSAT = "vsat"
     DEDICATED = "dedicated"
+    HOTSPOT = "hotspot"
+
+    @classmethod
+    def _missing_(cls, value):
+        if value is None:
+            return None
+        normalized = str(value).strip().lower().replace(" ", "_").replace("-", "_")
+        aliases = {
+            "internet": cls.INTERNET,
+            "broadband": cls.BROADBAND,
+            "ftth": cls.FTTH,
+            "fttb": cls.FTTB,
+            "wireless": cls.WIRELESS,
+            "vsat": cls.VSAT,
+            "dedicated": cls.DEDICATED,
+            "hotspot": cls.HOTSPOT,
+            "wifi": cls.INTERNET,
+            "fiber": cls.FTTH,
+            "fibre": cls.FTTH,
+            "home_internet": cls.INTERNET,
+        }
+        return aliases.get(normalized) or aliases.get(normalized.replace("_", ""))
 
 
 class BillingCycle(str, Enum):
@@ -66,9 +90,7 @@ class ServicePlan(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
-        json_encoders = {datetime: lambda v: v.isoformat(), ObjectId: lambda v: str(v)}
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ServicePlanInDB(ServicePlan):
@@ -101,7 +123,4 @@ class Service(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
     
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
-        json_encoders = {ObjectId: str}
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

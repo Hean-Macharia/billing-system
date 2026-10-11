@@ -8,6 +8,7 @@ Auth flow:
   MikroTik → FreeRADIUS → rlm_rest → FastAPI → MongoDB → response
 """
 from datetime import datetime, timezone
+from datetime import timedelta
 from typing import Optional
 
 from bson import ObjectId
@@ -51,25 +52,25 @@ class RadiusAuthService:
             logger.warning("RADIUS auth: missing username")
             return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Missing username")
 
-        logger.info(f"RADIUS auth request: user={username}, nas={nas_ip}, mac={calling_station}")
+        logger.info("RADIUS auth request received: nas=%s credential_present=%s", nas_ip, bool(username))
 
         # 1. Find user by username
         user_doc = await self.user_collection.find_one({"username": username})
 
         # 2. If not found, check for voucher (HotSpot voucher codes)
         if not user_doc:
-            voucher = await self._check_voucher(username)
+            voucher = await self._check_voucher(username, calling_station)
             if voucher:
                 return await self._authorize_voucher(voucher, nas_ip, calling_station)
-            logger.warning(f"RADIUS auth: user not found: {username}")
+            logger.warning("RADIUS auth rejected: credential not found")
             return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid credentials")
 
         user = RadiusUser(**{**user_doc, "_id": str(user_doc["_id"])})
 
         # 3. Verify password (cleartext comparison for RADIUS)
         # In production, you may want to hash passwords. For RADIUS PAP, cleartext is common.
-        if password and user.password != password:
-            logger.warning(f"RADIUS auth: wrong password for {username}")
+        if not password or user.password != password:
+            logger.warning("RADIUS auth rejected: missing or incorrect password")
             return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid credentials")
 
         # 4. Check user status
@@ -141,17 +142,27 @@ class RadiusAuthService:
         # Add class attribute for accounting linkage
         reply.reply_Class = f"uid:{user.id}"
 
-        logger.info(f"RADIUS auth ACCEPT: {username} -> rate={user.rate_limit}, pool={user.framed_ip_pool}")
+        logger.info("RADIUS user auth accepted: rate=%s pool=%s", user.rate_limit, user.framed_ip_pool)
         return reply
 
-    async def _check_voucher(self, code: str) -> Optional[dict]:
-        """Check if username is actually a voucher code."""
+    async def _check_voucher(self, code: str, calling_station: str) -> Optional[dict]:
+        """Check an unused voucher or a retry from the device that claimed it."""
         voucher = await self.voucher_collection.find_one({
             "voucher_code": code,
-            "status": "active",
+            "status": {"$in": ["active", "used"]},
         })
         if not voucher:
             return None
+
+        normalized_station = (calling_station or "").replace("-", ":").upper()
+        trial_mac = voucher.get("trial_mac")
+        bound_mac = voucher.get("bound_mac")
+        required_mac = trial_mac or bound_mac or voucher.get("calling_station_id")
+        if required_mac:
+            normalized_required_mac = required_mac.replace("-", ":").upper()
+            if normalized_station != normalized_required_mac:
+                logger.warning("RADIUS device-bound voucher rejected: client MAC does not match")
+                return None
 
         # Check expiry
         expiry = voucher.get("expiry_date")
@@ -166,19 +177,56 @@ class RadiusAuthService:
 
     async def _authorize_voucher(self, voucher: dict, nas_ip: str, calling_station: str) -> RadiusAuthResponse:
         """Authorize a HotSpot voucher."""
-        # Mark as used
-        await self.voucher_collection.update_one(
-            {"_id": voucher["_id"]},
+        now = datetime.now(timezone.utc)
+        duration = voucher.get("duration_hours")
+        duration_expiry = (
+            now + timedelta(hours=duration)
+            if duration and duration > 0
+            else None
+        )
+        expiry = voucher.get("expiry_date")
+        session_expiry = min(
+            (value for value in (expiry, duration_expiry) if value is not None),
+            default=None,
+        )
+
+        data_allowance_mb = voucher.get("data_allowance_mb")
+        remaining_data_bytes = None
+        if data_allowance_mb is not None:
+            used_data_bytes = await self._voucher_data_used_bytes(str(voucher["_id"]))
+            remaining_data_bytes = data_allowance_mb * 1024 * 1024 - used_data_bytes
+            if remaining_data_bytes <= 0:
+                await self.voucher_collection.update_one(
+                    {"_id": voucher["_id"]},
+                    {"$set": {"status": "expired", "updated_at": now}},
+                )
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message="Voucher data allowance has been used",
+                )
+
+        claim = await self.voucher_collection.update_one(
+            {"_id": voucher["_id"], "status": "active"},
             {
                 "$set": {
                     "status": "used",
-                    "used_at": datetime.now(timezone.utc),
+                    "used_at": now,
                     "nas_ip": nas_ip,
                     "calling_station_id": calling_station,
-                    "updated_at": datetime.now(timezone.utc),
+                    **({"expiry_date": session_expiry} if session_expiry else {}),
+                    "updated_at": now,
                 }
             },
         )
+        if claim.modified_count == 0:
+            existing = await self.voucher_collection.find_one({"_id": voucher["_id"], "status": "used"})
+            existing_station = (existing or {}).get("calling_station_id", "").replace("-", ":").upper()
+            normalized_station = (calling_station or "").replace("-", ":").upper()
+            if not existing or not normalized_station or existing_station != normalized_station:
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message="Voucher has already been used",
+                )
 
         reply = RadiusAuthResponse(control_Auth_Type="Accept")
 
@@ -196,21 +244,43 @@ class RadiusAuthService:
             reply.reply_Simultaneous_Use = max_devices
 
         # Duration limit
-        duration = voucher.get("duration_hours")
-        if duration:
-            reply.reply_Session_Timeout = duration * 3600
+        if session_expiry:
+            reply.reply_Session_Timeout = max(1, int((session_expiry - now).total_seconds()))
+        elif duration and duration > 0:
+            reply.reply_Session_Timeout = max(1, int(duration * 3600))
 
         # Data limit
-        data_mb = voucher.get("data_allowance_mb")
-        if data_mb:
-            reply.reply_Mikrotik_Recv_Limit = data_mb * 1024 * 1024
-            reply.reply_Mikrotik_Xmit_Limit = data_mb * 1024 * 1024
+        if remaining_data_bytes is not None:
+            reply.reply_Mikrotik_Total_Limit = remaining_data_bytes % (2**32)
+            gigawords = remaining_data_bytes // (2**32)
+            if gigawords:
+                reply.reply_Mikrotik_Total_Limit_Gigawords = gigawords
 
         reply.reply_Acct_Interim_Interval = 300
         reply.reply_Class = f"voucher:{str(voucher['_id'])}"
 
-        logger.info(f"RADIUS voucher ACCEPT: {voucher['voucher_code']} duration={duration}h data={data_mb}MB")
+        logger.info(
+            "RADIUS voucher ACCEPT: duration=%sh remaining_data=%s",
+            duration,
+            remaining_data_bytes,
+        )
         return reply
+
+    async def _voucher_data_used_bytes(self, voucher_id: str) -> int:
+        """Sum the latest cumulative RADIUS counters from this voucher's sessions."""
+        rows = await self.acct_collection.aggregate([
+            {"$match": {"voucher_id": voucher_id}},
+            {
+                "$group": {
+                    "_id": None,
+                    "input": {"$sum": "$acct_input_octets"},
+                    "output": {"$sum": "$acct_output_octets"},
+                }
+            },
+        ]).to_list(length=1)
+        if not rows:
+            return 0
+        return int(rows[0].get("input", 0) or 0) + int(rows[0].get("output", 0) or 0)
 
     # ── ACCOUNTING ──
 
@@ -260,6 +330,13 @@ class RadiusAuthService:
                     subscription_id = user.get("subscription_id")
             elif req.Class.startswith("voucher:"):
                 voucher_id = req.Class[8:]
+        if not voucher_id and req.User_Name:
+            voucher = await self.voucher_collection.find_one(
+                {"voucher_code": req.User_Name},
+                {"_id": 1},
+            )
+            if voucher:
+                voucher_id = str(voucher["_id"])
 
         doc = {
             "acct_session_id": req.Acct_Session_Id,
@@ -288,7 +365,11 @@ class RadiusAuthService:
             "updated_at": now,
         }
 
-        await self.acct_collection.insert_one(doc)
+        await self.acct_collection.update_one(
+            {"acct_session_id": req.Acct_Session_Id},
+            {"$setOnInsert": doc},
+            upsert=True,
+        )
 
         # Upsert live session
         await self.session_collection.update_one(

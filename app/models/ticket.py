@@ -45,7 +45,7 @@ class TicketMessage(BaseModel):
 
 
 class Ticket(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     ticket_number: str  # e.g. TKT-000123

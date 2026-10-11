@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
 from app.core.database import database
-from app.core.exceptions import AuthenticationError, AuthorizationError
+from app.core.exceptions import AuthenticationError, AuthorizationError, DatabaseConnectionError
 from app.core.logging import get_logger
 from app.core.security import decode_token
 from app.models.user import Permission, UserInDB, UserRole, UserStatus, has_permission
@@ -18,6 +18,8 @@ security_bearer = HTTPBearer(auto_error=False)
 
 async def get_db() -> AsyncIOMotorDatabase:
     """Yield the MongoDB database instance."""
+    if database.db is None:
+        raise DatabaseConnectionError("Database is not available")
     return database.db
 
 

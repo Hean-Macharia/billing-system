@@ -1,6 +1,9 @@
 """Customer endpoint tests."""
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.requires_db
 
 from app.main import app
 from app.core.database import database
@@ -16,7 +19,7 @@ def setup_db():
     asyncio.run(database.disconnect())
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def clean_collections():
     await database.db.users.delete_many({})
     await database.db.customers.delete_many({})

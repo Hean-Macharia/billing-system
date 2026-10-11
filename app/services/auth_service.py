@@ -1,4 +1,5 @@
 """Authentication business logic."""
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -29,13 +30,28 @@ class AuthService:
         self.db = db
         self.collection = db.users
 
+    @staticmethod
+    def _normalize_email(value: str) -> str:
+        return value.strip().lower()
+
+    @staticmethod
+    def _normalize_username(value: str) -> str:
+        return value.strip()
+
+    @staticmethod
+    def _case_insensitive_query(field: str, value: str) -> dict:
+        return {field: {"$regex": f"^{re.escape(value)}$", "$options": "i"}}
+
     async def register(self, data: UserRegister, created_by: Optional[str] = None) -> UserInDB:
         """Register a new user. Only SUPER_ADMIN/ADMIN can create non-customer roles."""
-        existing = await self.collection.find_one({"email": data.email})
+        email = self._normalize_email(data.email)
+        username = self._normalize_username(data.username)
+
+        existing = await self.collection.find_one(self._case_insensitive_query("email", email))
         if existing:
             raise ConflictError("User with this email already exists")
 
-        existing = await self.collection.find_one({"username": data.username})
+        existing = await self.collection.find_one(self._case_insensitive_query("username", username))
         if existing:
             raise ConflictError("Username already taken")
 
@@ -43,9 +59,9 @@ class AuthService:
         permissions = get_permissions_for_role(data.role)
 
         user_doc = {
-            "email": data.email,
-            "username": data.username,
-            "full_name": data.full_name,
+            "email": email,
+            "username": username,
+            "full_name": data.full_name.strip(),
             "hashed_password": hashed_pw,
             "role": data.role.value,
             "status": UserStatus.ACTIVE.value,
@@ -66,7 +82,8 @@ class AuthService:
 
     async def authenticate(self, email: str, password: str) -> UserInDB:
         """Authenticate user by email and password."""
-        doc = await self.collection.find_one({"email": email})
+        normalized_email = self._normalize_email(email)
+        doc = await self.collection.find_one(self._case_insensitive_query("email", normalized_email))
         if not doc:
             raise AuthenticationError("Invalid email or password")
 

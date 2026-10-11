@@ -4,7 +4,16 @@
   (isp_portal_*) so a staff member testing both apps in the same
   browser never gets their sessions mixed up.
 */
-const DEFAULT_BASE_URL = 'http://localhost:8000';
+function getDefaultBaseUrl() {
+  if (typeof window === 'undefined') return 'http://localhost:8000';
+  const { protocol, hostname, port } = window.location;
+  const localHosts = ['localhost', '127.0.0.1', '0.0.0.0'];
+  if (localHosts.includes(hostname) && port && port !== '8080') return 'http://localhost:8000';
+  if (protocol === 'file:') return 'http://localhost:8000';
+  return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
+}
+
+const DEFAULT_BASE_URL = getDefaultBaseUrl();
 
 const Api = (() => {
   function getBaseUrl() { return localStorage.getItem('isp_portal_api_base_url') || DEFAULT_BASE_URL; }

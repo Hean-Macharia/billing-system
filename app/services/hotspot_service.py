@@ -2,11 +2,13 @@
 cross-references Phase 7's live router sessions with voucher records so
 you can see, per active HotSpot user, which voucher they're on.
 """
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.logging import get_logger
@@ -22,6 +24,51 @@ class HotspotService:
         self.db = db
         self.plans = db.hotspot_plans
         self.vouchers = db.vouchers
+        self.trial_claims = db.hotspot_trial_claims
+
+    async def request_free_trial(self, client_mac: str) -> dict:
+        """Issue one short-lived trial voucher per client MAC address."""
+        normalized_mac = client_mac.replace("-", ":").upper()
+        now = datetime.now(timezone.utc)
+        voucher_code = secrets.token_hex(8).upper()
+        claim = {
+            "client_mac": normalized_mac,
+            "voucher_code": voucher_code,
+            "created_at": now,
+        }
+        try:
+            result = await self.trial_claims.insert_one(claim)
+        except DuplicateKeyError as exc:
+            raise ConflictError("This device has already claimed its free trial") from exc
+
+        voucher = {
+            "voucher_code": voucher_code,
+            "status": "active",
+            "duration_hours": 3 / 60,
+            "data_allowance_mb": None,
+            "rate_limit": None,
+            "max_devices": 1,
+            "price": 0,
+            "currency": "KES",
+            "expiry_date": now + timedelta(minutes=10),
+            "activated_at": now,
+            "used_at": None,
+            "trial_mac": normalized_mac,
+            "is_free_trial": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            await self.vouchers.insert_one(voucher)
+        except Exception:
+            await self.trial_claims.delete_one({"_id": result.inserted_id})
+            raise
+
+        return {
+            "voucher_code": voucher_code,
+            "duration_seconds": 180,
+            "redeem_before": voucher["expiry_date"].isoformat(),
+        }
 
     def _oid(self, id_str: str, label: str = "Resource") -> ObjectId:
         try:

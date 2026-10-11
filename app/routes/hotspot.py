@@ -5,11 +5,15 @@ from fastapi import APIRouter, Depends, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.dependencies import get_db, require_permission
+from app.core.exceptions import NotFoundError, ServiceUnavailableError, ValidationError
 from app.core.logging import get_logger
+from app.integrations.mikrotik.legacy_client import MikroTikLegacyError
+from app.integrations.mikrotik.rest_client import MikroTikRestError
 from app.models.user import Permission, UserInDB
 from app.schemas.hotspot import HotspotPlanCreate, HotspotPlanUpdate
-from app.schemas.portal import HotspotPurchaseRequest
+from app.schemas.portal import HotspotDeviceLookupRequest, HotspotPurchaseRequest, HotspotTrialRequest
 from app.services.hotspot_service import HotspotService
+from app.services.router_service import RouterService
 from app.utils.helpers import success_response
 
 logger = get_logger(__name__)
@@ -90,6 +94,47 @@ async def list_public_hotspot_plans(
     )
 
 
+@router.post("/devices/lookup", response_model=dict)
+async def lookup_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Resolve one private LAN IP or MAC against configured MikroTik DHCP leases."""
+    import ipaddress
+
+    if not data.ip_address and not data.mac_address:
+        raise ValidationError("Provide an IP address or MAC address")
+    if data.ip_address:
+        try:
+            address = ipaddress.ip_address(data.ip_address)
+        except ValueError as exc:
+            raise ValidationError("Enter a valid device IP address") from exc
+        if not address.is_private or address.is_loopback or address.is_link_local:
+            raise ValidationError("Device lookup is limited to private LAN IP addresses")
+
+    target_ip = str(ipaddress.ip_address(data.ip_address)) if data.ip_address else None
+    target_mac = data.mac_address.replace("-", ":").upper() if data.mac_address else None
+    routers = await db.routers.find({}, {"_id": 1}).to_list(length=100)
+    service = RouterService(db)
+    failed_lookups = 0
+    for router in routers:
+        router_id = str(router["_id"])
+        try:
+            leases = await service.get_dhcp_leases(router_id)
+        except (MikroTikLegacyError, MikroTikRestError) as exc:
+            failed_lookups += 1
+            logger.warning("HotSpot device lookup failed for configured router %s: %s", router_id, exc)
+            continue
+        for lease in leases:
+            lease_ip = lease.get("address")
+            lease_mac = (lease.get("mac_address") or "").replace("-", ":").upper()
+            if (target_ip and lease_ip == target_ip) or (target_mac and lease_mac == target_mac):
+                return success_response(
+                    message="Device verified",
+                    data={"ip_address": lease_ip, "mac_address": lease_mac, "hostname": lease.get("hostname")},
+                )
+    if failed_lookups and failed_lookups == len(routers):
+        raise ServiceUnavailableError("Configured hotspot routers are currently unavailable for device verification")
+    raise NotFoundError("No matching device was found in configured router DHCP leases")
+
+
 @router.post("/purchase", response_model=dict, status_code=201)
 async def purchase_hotspot_voucher(data: HotspotPurchaseRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
     """Public, no-auth: a walk-up guest picks a plan on the captive
@@ -98,7 +143,12 @@ async def purchase_hotspot_voucher(data: HotspotPurchaseRequest, db: AsyncIOMoto
     until the voucher is ready."""
     from app.services.mpesa_service import MpesaService
     service = MpesaService(db)
-    tx = await service.initiate_hotspot_purchase(plan_id=data.plan_id, phone_number=data.phone_number)
+    tx = await service.initiate_hotspot_purchase(
+        plan_id=data.plan_id,
+        phone_number=data.phone_number,
+        device_type=data.device_type,
+        device_mac=data.device_mac,
+    )
     return success_response(
         message="STK push sent - check your phone",
         data={"checkout_request_id": tx.checkout_request_id},
@@ -117,6 +167,18 @@ async def purchase_status(checkout_request_id: str, db: AsyncIOMotorDatabase = D
     return success_response(
         message="Purchase status retrieved",
         data={"status": tx.status.value, "voucher_code": tx.voucher_code, "result_desc": tx.result_desc},
+    )
+
+
+@router.post("/free-trial", response_model=dict, status_code=201)
+async def request_free_trial(data: HotspotTrialRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Issue a one-time, three-minute voucher bound to a captive client MAC."""
+    service = HotspotService(db)
+    trial = await service.request_free_trial(data.client_mac)
+    return success_response(
+        message="Three-minute trial issued",
+        data=trial,
+        status_code=201,
     )
 
 

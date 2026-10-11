@@ -36,7 +36,7 @@ class VoucherStatus(str, Enum):
 
 class VoucherBatch(BaseModel):
     """A single generation run - N vouchers sharing the same package/pricing."""
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     batch_name: str
@@ -75,7 +75,7 @@ class Voucher(BaseModel):
     duration_hours, data_allowance_mb, used_at, nas_ip, calling_station_id)
     so RADIUS auth keeps working unmodified.
     """
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     batch_id: Optional[str] = None

@@ -46,6 +46,7 @@ Pages.customers = async function (root) {
         { label: '', render: r => `
           <div class="row-actions">
             <button class="btn btn-ghost btn-sm" data-act="edit" data-id="${r._id}">${Icons.edit}</button>
+            <button class="btn btn-ghost btn-sm" data-act="package" data-id="${r._id}" title="Assign package">${Icons.billing}</button>
             <button class="btn btn-ghost btn-sm" data-act="status" data-id="${r._id}" data-status="${r.status}">${Icons.refresh}</button>
             <button class="btn btn-danger btn-sm" data-act="delete" data-id="${r._id}">${Icons.trash}</button>
           </div>` },
@@ -56,6 +57,7 @@ Pages.customers = async function (root) {
     wrap.querySelectorAll('[data-act=edit]').forEach(b => b.onclick = () => openForm(rows.find(r => r._id === b.dataset.id)));
     wrap.querySelectorAll('[data-act=delete]').forEach(b => b.onclick = () => doDelete(b.dataset.id));
     wrap.querySelectorAll('[data-act=status]').forEach(b => b.onclick = () => changeStatus(b.dataset.id, b.dataset.status));
+    wrap.querySelectorAll('[data-act=package]').forEach(b => b.onclick = () => assignPackage(b.dataset.id));
 
     const pagerWrap = root.querySelector('#c-pager-wrap');
     pagerWrap.innerHTML = '';
@@ -82,6 +84,74 @@ Pages.customers = async function (root) {
       try {
         await Api.request(`/api/v1/customers/${id}/status`, { method: 'PATCH', params: { status: sel } });
         toast('Status updated', 'success'); close(); load();
+      } catch (e) { toastError(e); }
+    };
+  }
+
+  async function assignPackage(id) {
+    const [plansRes] = await Promise.all([
+      Api.get('/api/v1/services', { limit: 100, status: 'active' }),
+    ]);
+    const plans = plansRes.data || [];
+    if (!plans.length) {
+      toastError(new Error('No active service plans exist yet. Create a plan first.'));
+      return;
+    }
+
+    const { close, overlay } = openDrawer({
+      title: 'Assign service package',
+      bodyHtml: `
+        <form id="package-form">
+          ${Field.select('package_id', 'Service plan', plans.map(p => ({ value: p._id, label: `${p.name} (${p.plan_code})` })), '', { required: true })}
+          ${Field.text('package_name', 'Package name', '', { required: true })}
+          ${Field.row2(
+            Field.text('bandwidth_down_mbps', 'Download (Mbps)', plans[0].download_speed_mbps, { type: 'number', required: true, min: 1 }),
+            Field.text('bandwidth_up_mbps', 'Upload (Mbps)', plans[0].upload_speed_mbps, { type: 'number', required: true, min: 1 })
+          )}
+          ${Field.row2(
+            Field.text('price_kes', 'Price (KES)', plans[0].base_price_kes, { type: 'number', required: true, min: 0, step: '0.01' }),
+            Field.text('billing_cycle', 'Billing cycle', 'monthly', { required: true })
+          )}
+        </form>`,
+      footerHtml: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="save">Assign package</button>`,
+    });
+
+    const planSelect = overlay.querySelector('select[name=package_id]');
+    const packageName = overlay.querySelector('input[name=package_name]');
+    const downEl = overlay.querySelector('input[name=bandwidth_down_mbps]');
+    const upEl = overlay.querySelector('input[name=bandwidth_up_mbps]');
+    const priceEl = overlay.querySelector('input[name=price_kes]');
+    const cycleEl = overlay.querySelector('input[name=billing_cycle]');
+    const syncPlanData = () => {
+      const plan = plans.find(p => p._id === planSelect.value);
+      if (!plan) return;
+      packageName.value = packageName.value || plan.name;
+      downEl.value = plan.download_speed_mbps;
+      upEl.value = plan.upload_speed_mbps;
+      priceEl.value = plan.base_price_kes;
+      cycleEl.value = plan.billing_cycle || 'monthly';
+    };
+    planSelect.addEventListener('change', syncPlanData);
+    syncPlanData();
+
+    overlay.querySelector('[data-act=cancel]').onclick = close;
+    overlay.querySelector('[data-act=save]').onclick = async () => {
+      const form = overlay.querySelector('#package-form');
+      if (!form.reportValidity()) return;
+      const raw = formToObject(form);
+      try {
+        await Api.post(`/api/v1/customers/${id}/package`, {
+          package_id: raw.package_id,
+          package_name: raw.package_name || raw.package_id,
+          bandwidth_down_mbps: Number(raw.bandwidth_down_mbps),
+          bandwidth_up_mbps: Number(raw.bandwidth_up_mbps),
+          price_kes: Number(raw.price_kes),
+          billing_cycle: raw.billing_cycle || 'monthly',
+          activation_date: new Date().toISOString(),
+        });
+        toast('Package assigned', 'success');
+        close();
+        load();
       } catch (e) { toastError(e); }
     };
   }

@@ -1,22 +1,20 @@
-FROM freeradius/freeradius-server:latest
+FROM freeradius/freeradius-server:3.2.7
 
-# Install curl for healthchecks
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+COPY mods-enabled/rest /etc/raddb/mods-available/rest
+COPY sites-enabled/default.template /etc/raddb/sites-available/devzen.template
+COPY clients.conf.template /etc/raddb/clients.conf.template
+COPY entrypoint.sh /usr/local/bin/radius-entrypoint
 
-# Copy configuration
-COPY mods-enabled/rest /etc/freeradius/mods-enabled/rest
-COPY sites-enabled/default /etc/freeradius/sites-enabled/default
-COPY clients.conf /etc/freeradius/clients.conf
-COPY dictionary.mikrotik /usr/share/freeradius/dictionary.mikrotik
+RUN rm -f /etc/raddb/mods-enabled/rest \
+    && ln -s ../mods-available/rest /etc/raddb/mods-enabled/rest \
+    && rm -f /etc/raddb/sites-enabled/default \
+    && ln -s ../sites-available/devzen /etc/raddb/sites-enabled/default \
+    && chmod 755 /usr/local/bin/radius-entrypoint
 
-# Create log directory
-RUN mkdir -p /var/log/freeradius && chown freerad:freerad /var/log/freeradius
-
-# Expose RADIUS ports
 EXPOSE 1812/udp 1813/udp
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=8s --start-period=15s --retries=3 \
     CMD radiusd -C || exit 1
 
-CMD ["radiusd", "-X", "-f"]
+ENTRYPOINT ["/usr/local/bin/radius-entrypoint"]
+CMD ["radiusd", "-f"]

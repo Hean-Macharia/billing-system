@@ -15,7 +15,7 @@ class NasType(str, Enum):
 
 class NasClient(BaseModel):
     """RADIUS NAS client (MikroTik router)."""
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     name: str
@@ -40,7 +40,7 @@ class RadiusUserType(str, Enum):
 
 class RadiusUser(BaseModel):
     """RADIUS user credential record (PPPoE or HotSpot)."""
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     username: str = Field(..., min_length=1, max_length=128)
@@ -77,7 +77,7 @@ class RadiusUser(BaseModel):
 
 class RadiusAccounting(BaseModel):
     """RADIUS accounting record (Start/Stop/Interim-Update)."""
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     acct_session_id: str
@@ -124,7 +124,7 @@ class RadiusAccounting(BaseModel):
 
 class RadiusSession(BaseModel):
     """Live session view (computed from latest accounting Start without Stop)."""
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     acct_session_id: str

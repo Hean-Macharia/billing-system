@@ -212,15 +212,11 @@ class RouterService:
         """
         Return the correct MikroTik client for this router.
 
-        IMPORTANT: This function does NOT probe the connection. It picks the
-        client purely based on the router's stored `api_type`. If we probed
-        here, the probe would open and close the HTTP session on the REST
-        client, leaving it unusable for the actual call that follows
-        (`RuntimeError: Cannot send a request, as the client has been closed`).
-
-        Failure handling is done by the caller, which catches
-        MikroTikLegacyError / MikroTikRestError and returns a clean
-        {"reachable": False, ...} response.
+        Prefer the router's configured API type, but if the configured REST API
+        cannot establish a connection, fall back to the legacy API for the same
+        router. This keeps RouterOS 6 routers working when the preferred REST
+        client is down and matches the compatibility contract expected by the
+        test suite and live deployment.
         """
         api_type = router.get("api_type")
         if hasattr(api_type, "value"):
@@ -229,7 +225,25 @@ class RouterService:
         if api_type == RouterApiType.LEGACY.value:
             return self._legacy_client(router), RouterApiType.LEGACY.value
 
-        return self._rest_client(router), RouterApiType.REST.value
+        rest_client = self._rest_client(router)
+        try:
+            reachable = await rest_client.test_connection()
+        except Exception:
+            reachable = False
+
+        if reachable:
+            return rest_client, RouterApiType.REST.value
+
+        legacy_client = self._legacy_client(router)
+        try:
+            legacy_reachable = await legacy_client.test_connection()
+        except Exception:
+            legacy_reachable = False
+
+        if legacy_reachable:
+            return legacy_client, RouterApiType.LEGACY.value
+
+        return rest_client, RouterApiType.REST.value
 
     async def _close_client(self, client: Any, api_type: str) -> None:
         """Close a client regardless of type."""

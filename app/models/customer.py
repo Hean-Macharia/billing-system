@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
-from pydantic import BaseModel, BeforeValidator, EmailStr, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, EmailStr, Field, field_validator
 from typing_extensions import Annotated
 
 ObjectIdStr = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, ObjectId) else v)]
@@ -15,6 +15,8 @@ class CustomerStatus(str, Enum):
     INACTIVE = "inactive"
     SUSPENDED = "suspended"
     PENDING = "pending"
+    PENDING_INSTALLATION = "pending_installation"
+    CANCELLED = "cancelled"
 
 
 class CustomerType(str, Enum):
@@ -123,9 +125,7 @@ class Customer(BaseModel):
     last_billed_at: Optional[datetime] = None
     last_payment_at: Optional[datetime] = None
 
-    class Config:
-        populate_by_name = True
-        json_encoders = {datetime: lambda v: v.isoformat(), ObjectId: lambda v: str(v)}
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class CustomerInDB(Customer):

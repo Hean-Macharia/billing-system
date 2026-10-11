@@ -4,12 +4,35 @@ These schemas define the JSON payloads exchanged between FreeRADIUS and FastAPI.
 """
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+class RadiusRequestModel(BaseModel):
+    """Accept flat test payloads and FreeRADIUS rlm_rest JSON attributes."""
+
+    model_config = {"populate_by_name": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def flatten_freeradius_attributes(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        flattened = {}
+        for name, attribute in value.items():
+            attribute_name = name.rsplit(":", 1)[-1]
+            if isinstance(attribute, dict) and "value" in attribute:
+                attribute = attribute["value"]
+            if isinstance(attribute, list):
+                attribute = attribute[0] if attribute else None
+            flattened[attribute_name] = attribute
+        return flattened
 
 
 
-class RadiusAuthRequest(BaseModel):
+class RadiusAuthRequest(RadiusRequestModel):
     """Incoming auth request from FreeRADIUS rlm_rest."""
+
     User_Name: Optional[str] = Field(alias="User-Name", default=None)
     User_Password: Optional[str] = Field(alias="User-Password", default=None)
     NAS_IP_Address: Optional[str] = Field(alias="NAS-IP-Address", default=None)
@@ -27,9 +50,6 @@ class RadiusAuthRequest(BaseModel):
     MS_CHAP_Response: Optional[str] = Field(alias="MS-CHAP-Response", default=None)
     MS_CHAP2_Response: Optional[str] = Field(alias="MS-CHAP2-Response", default=None)
 
-    class Config:
-        populate_by_name = True
-
 
 class RadiusAuthResponse(BaseModel):
     """Outgoing auth response to FreeRADIUS rlm_rest.
@@ -38,6 +58,8 @@ class RadiusAuthResponse(BaseModel):
       control:Auth-Type = Accept | Reject
       reply:Attribute-Name = value
     """
+    model_config = {"populate_by_name": True}
+
     control_Auth_Type: str = Field(default="Accept", alias="control:Auth-Type")
     reply_Mikrotik_Rate_Limit: Optional[str] = Field(default=None, alias="reply:Mikrotik-Rate-Limit")
     reply_Session_Timeout: Optional[int] = Field(default=None, alias="reply:Session-Timeout")
@@ -50,15 +72,18 @@ class RadiusAuthResponse(BaseModel):
     reply_Simultaneous_Use: Optional[int] = Field(default=None, alias="reply:Simultaneous-Use")
     reply_Mikrotik_Recv_Limit: Optional[int] = Field(default=None, alias="reply:Mikrotik-Recv-Limit")
     reply_Mikrotik_Xmit_Limit: Optional[int] = Field(default=None, alias="reply:Mikrotik-Xmit-Limit")
+    reply_Mikrotik_Total_Limit: Optional[int] = Field(default=None, alias="reply:Mikrotik-Total-Limit")
+    reply_Mikrotik_Total_Limit_Gigawords: Optional[int] = Field(
+        default=None,
+        alias="reply:Mikrotik-Total-Limit-Gigawords",
+    )
     reply_Mikrotik_Hostspot_Max_Original_Url: Optional[str] = Field(default=None, alias="reply:Mikrotik-Hostspot-Max-Original-Url")
     reply_Reply_Message: Optional[str] = Field(default=None, alias="reply:Reply-Message")
 
-    class Config:
-        populate_by_name = True
 
-
-class RadiusAccountingRequest(BaseModel):
+class RadiusAccountingRequest(RadiusRequestModel):
     """Incoming accounting request from FreeRADIUS rlm_rest."""
+
     Acct_Status_Type: str = Field(alias="Acct-Status-Type")
     User_Name: Optional[str] = Field(alias="User-Name", default=None)
     NAS_IP_Address: Optional[str] = Field(alias="NAS-IP-Address", default=None)
@@ -81,6 +106,3 @@ class RadiusAccountingRequest(BaseModel):
     Event_Timestamp: Optional[str] = Field(alias="Event-Timestamp", default=None)
     Class: Optional[str] = Field(alias="Class", default=None)
     Acct_Delay_Time: Optional[int] = Field(alias="Acct-Delay-Time", default=0)
-
-    class Config:
-        populate_by_name = True

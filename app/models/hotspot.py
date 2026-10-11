@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class HotspotPlan(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     name: str  # e.g. "1 Hour Access", "Daily Unlimited"

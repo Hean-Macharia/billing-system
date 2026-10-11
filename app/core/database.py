@@ -1,5 +1,8 @@
 """Async MongoDB database connection using Motor."""
+import asyncio
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from mongomock_motor import AsyncMongoMockClient
 from pymongo.errors import ServerSelectionTimeoutError
 
 from app.core.config import settings
@@ -19,6 +22,7 @@ COLLECTIONS = [
     "vouchers",
     "voucher_batches",
     "hotspot_plans",
+    "hotspot_trial_claims",
     "tickets",
     "notifications",
     "automation_runs",
@@ -88,6 +92,10 @@ INDEXES = {
         {"keys": [("is_active", 1)]},
         {"keys": [("sort_order", 1)]},
     ],
+    "hotspot_trial_claims": [
+        {"keys": [("client_mac", 1)], "unique": True},
+        {"keys": [("voucher_code", 1)], "unique": True},
+    ],
     "tickets": [
         {"keys": [("ticket_number", 1)], "unique": True},
         {"keys": [("customer_id", 1)]},
@@ -152,6 +160,7 @@ INDEXES = {
         {"keys": [("acct_session_id", 1)]},
         {"keys": [("username", 1)]},
         {"keys": [("nas_ip_address", 1)]},
+        {"keys": [("voucher_id", 1)]},
     ],
 }
 
@@ -165,24 +174,48 @@ class Database:
 
     async def connect(self) -> None:
         """Establish MongoDB connection with pooling."""
-        try:
-            connection_options = {
-                "maxPoolSize": 50,
-                "minPoolSize": 10,
-                "serverSelectionTimeoutMS": 30000,
-                "connectTimeoutMS": 30000,
-                "socketTimeoutMS": 30000,
-                # tz_aware=True makes every datetime Motor/pymongo reads back
-                # from MongoDB a timezone-aware UTC datetime instead of a
-                # naive one. Without this, any comparison against
-                # datetime.now(timezone.utc) anywhere in the app (voucher
-                # expiry checks, RADIUS auth's expiry check, subscription
-                # billing dates, etc.) raises TypeError the first time it
-                # runs against a real document instead of a freshly
-                # constructed in-memory one.
-                "tz_aware": True,
-            }
+        running_loop = asyncio.get_running_loop()
 
+        if self.client is not None:
+            try:
+                existing_loop = getattr(self.client, "get_io_loop", lambda: None)()
+                if existing_loop is not None and (existing_loop.is_closed() or existing_loop is not running_loop):
+                    logger.warning("Detected MongoDB client bound to a closed or different event loop; reconnecting")
+                    await self.disconnect()
+                else:
+                    await self.client.admin.command("ping")
+                    logger.info(f"MongoDB already connected: {settings.database_name}")
+                    return
+            except RuntimeError:
+                await self.disconnect()
+            except Exception:
+                await self.disconnect()
+
+        connection_options = {
+            "maxPoolSize": 50,
+            "minPoolSize": 10,
+            "serverSelectionTimeoutMS": 30000,
+            "connectTimeoutMS": 30000,
+            "socketTimeoutMS": 30000,
+            # tz_aware=True makes every datetime Motor/pymongo reads back
+            # from MongoDB a timezone-aware UTC datetime instead of a
+            # naive one. Without this, any comparison against
+            # datetime.now(timezone.utc) anywhere in the app (voucher
+            # expiry checks, RADIUS auth's expiry check, subscription
+            # billing dates, etc.) raises TypeError the first time it
+            # runs against a real document instead of a freshly
+            # constructed in-memory one.
+            "tz_aware": True,
+        }
+
+        # Allow a lightweight in-memory fallback for local/test environments
+        # when no MongoDB service is running. Production remains strict.
+        use_mock_db = (
+            settings.app_env.lower() in {"development", "test"}
+            or "mock" in settings.mongodb_url.lower()
+        )
+
+        try:
             # Detect Atlas connection
             if "mongodb+srv" in settings.mongodb_url or "cluster" in settings.mongodb_url:
                 logger.info("Detected MongoDB Atlas connection - using extended timeouts")
@@ -198,21 +231,37 @@ class Database:
             await self.client.admin.command("ping")
             logger.info(f"MongoDB connected: {settings.database_name}")
 
-            # Create indexes
-            await self._create_indexes()
-
         except ServerSelectionTimeoutError as e:
-            logger.critical(f"MongoDB connection timeout: {e}")
-            raise DatabaseConnectionError(f"Could not connect to MongoDB: {e}")
+            if not use_mock_db:
+                logger.critical(f"MongoDB connection timeout: {e}")
+                raise DatabaseConnectionError(f"Could not connect to MongoDB: {e}")
+            logger.warning("MongoDB unavailable; using in-memory mock database for local/test execution")
+            self.client = AsyncMongoMockClient(settings.mongodb_url)
+            self.db = self.client[settings.database_name]
+            await self.client.admin.command("ping")
         except Exception as e:
-            logger.critical(f"MongoDB connection failed: {e}")
-            raise DatabaseConnectionError(f"Database connection error: {e}")
+            if not use_mock_db:
+                logger.critical(f"MongoDB connection failed: {e}")
+                raise DatabaseConnectionError(f"Database connection error: {e}")
+            logger.warning("MongoDB unavailable; using in-memory mock database for local/test execution")
+            self.client = AsyncMongoMockClient(settings.mongodb_url)
+            self.db = self.client[settings.database_name]
+            await self.client.admin.command("ping")
+
+        # Create indexes
+        await self._create_indexes()
 
     async def disconnect(self) -> None:
         """Close MongoDB connection."""
         if self.client:
-            self.client.close()
-            logger.info("MongoDB connection closed")
+            try:
+                self.client.close()
+            except Exception as exc:
+                logger.warning(f"MongoDB close warning: {exc}")
+            finally:
+                self.client = None
+                self.db = None
+                logger.info("MongoDB connection closed")
 
     async def is_healthy(self) -> bool:
         """Check if database connection is alive."""

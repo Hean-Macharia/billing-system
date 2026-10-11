@@ -166,6 +166,23 @@ async def update_customer_status(
     )
 
 
+@router.post("/{customer_id}/package", response_model=dict)
+async def assign_customer_package(
+    request: Request,
+    customer_id: str,
+    package_data: dict,
+    current_user: UserInDB = Depends(require_permission(Permission.CUSTOMERS_UPDATE)),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Assign a service package to a customer and activate the customer record."""
+    service = CustomerService(db)
+    customer = await service.assign_package(customer_id, package_data)
+    return success_response(
+        message="Package assigned successfully",
+        data=_to_customer_response(customer),
+    )
+
+
 @router.get("/code/{customer_code}", response_model=dict)
 async def get_customer_by_code(
     request: Request,

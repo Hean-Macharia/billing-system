@@ -17,9 +17,13 @@ env/
 *.swp
 *.swo
 .env
-.env.local
+.env.*
+!.env.example
+!.env.production.example
+!.env.radius.example
 .pytest_cache/
 .coverage
 htmlcov/
 logs/
 *.log
+/docker/nginx/certs/*.pem

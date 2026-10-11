@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Optional
 
 from bson import ObjectId
-from pydantic import BaseModel, BeforeValidator, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from typing_extensions import Annotated
 
 ObjectIdStr = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, ObjectId) else v)]
@@ -94,9 +94,7 @@ class Payment(BaseModel):
             return None
         return v
 
-    class Config:
-        populate_by_name = True
-        json_encoders = {datetime: lambda v: v.isoformat(), ObjectId: lambda v: str(v)}
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class PaymentInDB(Payment):

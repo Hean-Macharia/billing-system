@@ -65,7 +65,7 @@ const Router = (() => {
         <div class="sidebar-brand">
           <div class="mark">${Icons.wifi}</div>
           <div>
-            <div class="name">Nyaururu Net</div>
+            <div class="name">DEVZEN CREATIONS</div>
             <div class="sub">Ops Console</div>
           </div>
         </div>

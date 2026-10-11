@@ -15,7 +15,7 @@ class SiteStatus(str, Enum):
 
 
 class Site(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     name: str

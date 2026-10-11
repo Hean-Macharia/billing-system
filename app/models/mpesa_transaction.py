@@ -18,7 +18,7 @@ class MpesaTransactionStatus(str, Enum):
 
 class MpesaTransaction(BaseModel):
     """Stores every M-Pesa STK Push request and callback for audit & idempotency."""
-    model_config = ConfigDict(populate_by_name=True, json_encoders={ObjectId: str})
+    model_config = ConfigDict(populate_by_name=True)
 
     id: Optional[str] = Field(alias="_id", default=None)
     transaction_type: str = "stk_push"  # "stk_push" (customer invoice payment) | "hotspot_purchase" (walk-up self-service)

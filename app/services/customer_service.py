@@ -157,7 +157,14 @@ class CustomerService:
 
     async def update_status(self, customer_id: str, status: str) -> CustomerInDB:
         """Update customer status."""
-        valid_statuses = ["active", "inactive", "suspended", "pending"]
+        valid_statuses = [
+            CustomerStatus.ACTIVE.value,
+            CustomerStatus.INACTIVE.value,
+            CustomerStatus.SUSPENDED.value,
+            CustomerStatus.PENDING.value,
+            CustomerStatus.PENDING_INSTALLATION.value,
+            CustomerStatus.CANCELLED.value,
+        ]
         if status not in valid_statuses:
             raise ValidationError(f"Status must be one of: {', '.join(valid_statuses)}")
 
@@ -179,6 +186,7 @@ class CustomerService:
     async def assign_package(self, customer_id: str, package_data: dict) -> CustomerInDB:
         """Assign a service package to a customer."""
         customer = await self.get_by_id(customer_id)
+        package_payload = dict(package_data)
 
         # Move current package to history if exists
         if customer.current_package:
@@ -187,14 +195,15 @@ class CustomerService:
                 {"$push": {"package_history": customer.current_package.model_dump()}},
             )
 
-        package_data["status"] = "active"
-        package_data["activation_date"] = datetime.now(timezone.utc)
+        package_payload["status"] = "active"
+        package_payload["activation_date"] = datetime.now(timezone.utc)
 
         result = await self.collection.update_one(
             {"_id": ObjectId(customer_id)},
             {
                 "$set": {
-                    "current_package": package_data,
+                    "current_package": package_payload,
+                    "status": CustomerStatus.ACTIVE.value,
                     "updated_at": datetime.now(timezone.utc),
                 }
             },
@@ -203,7 +212,7 @@ class CustomerService:
             raise NotFoundError("Customer not found")
 
         logger.info(f"Package assigned to customer {customer_id}")
-        return await self.get_by_id(acustomer_id)
+        return await self.get_by_id(customer_id)
 
     async def update_balance(self, customer_id: str, amount: float) -> CustomerInDB:
         """Update customer outstanding balance."""

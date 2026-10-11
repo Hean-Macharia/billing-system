@@ -76,5 +76,4 @@ class SubscriptionResponse(BaseModel):
     cancelled_at: Optional[datetime] = None
     cancellation_reason: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = {"populate_by_name": True}

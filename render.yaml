@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: devzen-creations
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/ready
+    autoDeploy: true
+    envVars:
+      - key: APP_NAME
+        value: DEVZEN CREATIONS
+      - key: APP_ENV
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: DATABASE_NAME
+        value: isp_billing
+      - key: MONGODB_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: RADIUS_SECRET
+        sync: false
+      - key: RADIUS_API_SECRET
+        sync: false
+      - key: ROUTER_ENCRYPTION_KEY
+        sync: false

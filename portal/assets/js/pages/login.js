@@ -4,7 +4,7 @@ Pages.login = function (root) {
       <div style="width:100%;max-width:380px;">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:22px;justify-content:center;color:#fff;">
           <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#2DD4BF,#1a8f82);display:flex;align-items:center;justify-content:center;color:#063B36;">${Icons.wifi}</div>
-          <div style="font-weight:700;font-size:16px;">Nyaururu Net</div>
+          <div style="font-weight:700;font-size:16px;">DEVZEN CREATIONS</div>
         </div>
         <div class="card" style="box-shadow:0 20px 40px -18px rgba(16,25,47,.35);">
           <h2 style="margin-bottom:4px;">Welcome back</h2>
@@ -63,7 +63,7 @@ Pages.register = function (root) {
       <div style="width:100%;max-width:400px;">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:22px;justify-content:center;color:#fff;">
           <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#2DD4BF,#1a8f82);display:flex;align-items:center;justify-content:center;color:#063B36;">${Icons.wifi}</div>
-          <div style="font-weight:700;font-size:16px;">Nyaururu Net</div>
+          <div style="font-weight:700;font-size:16px;">DEVZEN CREATIONS</div>
         </div>
         <div class="card" style="box-shadow:0 20px 40px -18px rgba(16,25,47,.35);">
           <h2 style="margin-bottom:4px;">Activate your account</h2>

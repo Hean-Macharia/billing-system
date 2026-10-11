@@ -5,7 +5,7 @@ Pages.login = function (root) {
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:28px;justify-content:center;">
           <div class="mark" style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#2DD4BF,#1a8f82);display:flex;align-items:center;justify-content:center;color:#063B36;">${Icons.wifi}</div>
           <div>
-            <div style="font-weight:700;font-size:16px;color:#E8ECF7;">Nyaururu Net</div>
+            <div style="font-weight:700;font-size:16px;color:#E8ECF7;">DEVZEN CREATIONS</div>
             <div style="font-size:12px;color:#93A2C4;">Ops Console</div>
           </div>
         </div>
@@ -15,7 +15,7 @@ Pages.login = function (root) {
           <form id="login-form">
             <div class="field-row">
               <label class="field-label" style="color:#C6D0E8;">Email</label>
-              <input type="email" name="email" required placeholder="you@nyaururunet.co.ke" autofocus/>
+              <input type="email" name="email" required placeholder="admin@yourdomain.com" autofocus/>
             </div>
             <div class="field-row">
               <label class="field-label" style="color:#C6D0E8;">Password</label>

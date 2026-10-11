@@ -64,5 +64,4 @@ class PaymentResponse(BaseModel):
     updated_at: datetime
     created_by: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = {"populate_by_name": True}

@@ -3,332 +3,1498 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1"/>
-<title>Nyaururu Net WiFi</title>
+<title>DEVZEN CREATIONS WiFi</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><rect width=%2224%22 height=%2224%22 rx=%226%22 fill=%22%232DD4BF%22/><path d=%22M4 9.5a14 14 0 0116 0%22 stroke=%22%23063B36%22 stroke-width=%222%22 fill=%22none%22/><path d=%226 13a10 10 0 0112 0%22 stroke=%22%23063B36%22 stroke-width=%222%22 fill=%22none%22/><circle cx=%2212%22 cy=%2217%22 r=%221.6%22 fill=%22%23063B36%22/></svg>"/>
 <style>
-  /*
-    Deployment notes (not shown to the guest, just for whoever installs this):
-    - This is one self-contained file on purpose: MikroTik's HotSpot server
-      serves its login page straight out of /hotspot on the router's own
-      filesystem, so the simplest, most robust thing to hand over is a
-      single index.html with no build step and no separate asset folder
-      to go missing in transit.
-    - Edit API_BASE_URL, ORG_NAME and SUPPORT_PHONE below before deploying.
-    - After a successful purchase this shows the voucher code and asks the
-      guest to enter it in MikroTik's own login box. To skip that step and
-      auto-submit it, deploy this file AS the router's hotspot login.html
-      and wire the success handler to MikroTik's $(link-login-only) form
-      variables - left out here because that only works once this file is
-      actually sitting on a real router, not as a generic handoff.
-  */
-  @import url('https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
   :root {
-    --ink: #10192F; --signal: #2DD4BF; --signal-ink: #063B36; --signal-soft: #E1FBF7;
-    --amber: #F2A93B; --good: #34C77A; --bad: #F1616B;
-    --paper: #F6F8FC; --line: #E4E9F2; --text: #16213A; --muted: #6C7A99;
-    font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --bg: #f5f7fb;
+    --panel: #ffffff;
+    --panel-alt: #f0f5ff;
+    --ink: #101a2b;
+    --muted: #67758d;
+    --line: #e5eaf4;
+    --accent: #00a7a0;
+    --accent-dark: #0c5c62;
+    --accent-soft: #dffaf6;
+    --amber: #f5b942;
+    --danger: #d24545;
+    --success: #28a76d;
+    --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
   }
+
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--paper); color: var(--text); }
-  body { font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
-  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
-  h1, h2, h3 { margin: 0; font-weight: 800; letter-spacing: -0.01em; }
-
-  .hero {
-    background: radial-gradient(circle at 30% 0%, #1B2A4A, #10192F 65%);
-    color: #fff; padding: 36px 20px 46px; text-align: center;
-    border-radius: 0 0 28px 28px;
-  }
-  .hero .mark {
-    width: 46px; height: 46px; border-radius: 12px; margin: 0 auto 12px;
-    background: linear-gradient(135deg, var(--signal), #1a8f82);
-    display: flex; align-items: center; justify-content: center; color: var(--signal-ink);
-  }
-  .hero .mark svg { width: 24px; height: 24px; }
-  .hero h1 { font-size: 20px; }
-  .hero p { color: #93A2C4; font-size: 13px; margin: 6px 0 0; }
-
-  .wrap { max-width: 460px; margin: -26px auto 0; padding: 0 16px 40px; position: relative; }
-
-  .plan {
-    background: #fff; border: 1px solid var(--line); border-radius: 16px;
-    padding: 16px 18px; margin-bottom: 12px;
-    display: flex; align-items: center; justify-content: space-between; gap: 14px;
-    box-shadow: 0 10px 24px -16px rgba(16,25,47,.25);
-  }
-  .plan .left { min-width: 0; }
-  .plan .duration { font-weight: 800; font-size: 15.5px; }
-  .plan .meta { font-size: 12px; color: var(--muted); margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
-  .plan .meta span { display: inline-flex; align-items: center; gap: 4px; }
-  .plan .meta svg { width: 12px; height: 12px; }
-  .plan .right { text-align: right; flex-shrink: 0; }
-  .plan .price { font-weight: 800; font-size: 17px; color: var(--ink); }
-  .plan .price .cur { font-size: 11px; color: var(--muted); font-weight: 600; }
-  .plan .buy {
-    margin-top: 8px; border: none; background: var(--signal); color: var(--signal-ink);
-    font-weight: 800; font-size: 12.5px; padding: 7px 16px; border-radius: 100px; cursor: pointer;
-  }
-  .plan .buy:active { filter: brightness(0.95); }
-  .plan.best { border-color: var(--signal); position: relative; }
-  .plan.best::before {
-    content: 'MOST POPULAR'; position: absolute; top: -9px; left: 16px;
-    background: var(--signal); color: var(--signal-ink); font-size: 9.5px; font-weight: 800;
-    padding: 2px 8px; border-radius: 100px; letter-spacing: .03em;
+  html, body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: 'Inter', sans-serif; line-height: 1.5;
   }
 
-  .loading, .error-box { text-align: center; padding: 40px 16px; color: var(--muted); }
-  .error-box { color: var(--bad); }
-
-  .footer { text-align: center; padding: 20px 16px 0; color: var(--muted); font-size: 12.5px; }
-  .footer a { color: var(--signal-ink); font-weight: 700; text-decoration: none; }
-
-  /* Bottom sheet */
-  .sheet-overlay { position: fixed; inset: 0; background: rgba(9,14,28,.55); display: flex; align-items: flex-end; justify-content: center; z-index: 100; }
-  .sheet { background: #fff; width: 100%; max-width: 460px; border-radius: 20px 20px 0 0; padding: 22px 20px 26px; }
-  @media (min-width: 500px) { .sheet-overlay { align-items: center; } .sheet { border-radius: 20px; } }
-
-  .sheet h3 { font-size: 16px; margin-bottom: 4px; }
-  .sheet .sub { color: var(--muted); font-size: 12.5px; margin-bottom: 18px; }
-  .sheet .big-price { text-align: center; font-size: 28px; font-weight: 800; margin: 4px 0 18px; }
-
-  label { display: block; font-size: 12.5px; font-weight: 700; color: #3C4A6B; margin-bottom: 6px; }
-  input[type=tel] {
-    width: 100%; padding: 13px 14px; border-radius: 11px; border: 1.5px solid var(--line);
-    font-size: 16px; font-family: inherit; margin-bottom: 6px;
+  body {
+    min-height: 100vh;
   }
-  input[type=tel]:focus { outline: none; border-color: var(--signal); }
-  .hint { font-size: 11.5px; color: var(--muted); margin-bottom: 18px; }
 
-  .btn { width: 100%; border: none; border-radius: 100px; padding: 14px; font-weight: 800; font-size: 14.5px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
-  .btn-primary { background: var(--signal); color: var(--signal-ink); }
-  .btn-primary:disabled { opacity: .55; }
-  .btn-ghost { background: transparent; color: var(--muted); margin-top: 10px; }
+  a { color: inherit; text-decoration: none; }
+  img { max-width: 100%; display: block; }
 
-  .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2.5px solid rgba(6,59,54,.25); border-top-color: var(--signal-ink); animation: spin .7s linear infinite; }
+  .page-shell {
+    max-width: 1150px;
+    margin: 0 auto;
+    padding: 18px 16px 40px;
+  }
+
+  .topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255,255,255,0.75);
+    border: 1px solid rgba(255,255,255,0.7);
+    border-radius: 18px;
+    padding: 14px 18px;
+    box-shadow: 0 10px 30px rgba(16, 26, 43, 0.05);
+    backdrop-filter: blur(10px);
+    margin-bottom: 20px;
+    position: sticky;
+    top: 12px;
+    z-index: 20;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 900;
+    letter-spacing: -0.04em;
+  }
+
+  .brand-mark {
+    width: 42px; height: 42px; border-radius: 14px;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), #1eb7a9);
+    color: #fff;
+    font-size: 20px;
+    box-shadow: 0 12px 20px rgba(0, 167, 160, 0.35);
+  }
+
+  .brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.05;
+  }
+
+  .brand-name { font-size: 1.15rem; }
+  .brand-sub { font-size: 0.72rem; color: var(--muted); font-weight: 700; }
+
+  .cta-mini {
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    border-radius: 999px;
+    padding: 10px 16px;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .hero-card {
+    display: grid;
+    grid-template-columns: 1.25fr 0.75fr;
+    gap: 18px;
+    background: linear-gradient(135deg, #0f1b2d 0%, #122b47 60%, #0f2337 100%);
+    color: white;
+    border-radius: 28px;
+    padding: 28px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .hero-card::before {
+    content: "";
+    position: absolute;
+    inset: auto -60px -80px auto;
+    width: 260px; height: 260px;
+    border-radius: 50%;
+    background: rgba(0, 167, 160, 0.18);
+  }
+
+  .hero-copy {
+    position: relative;
+    z-index: 1;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #d9f5f3;
+  }
+
+  .hero-copy h1 {
+    margin: 18px 0 10px;
+    font-size: clamp(2.1rem, 3vw, 3.2rem);
+    letter-spacing: -0.06em;
+    line-height: 0.95;
+  }
+
+  .hero-copy p {
+    margin: 0;
+    color: rgba(255,255,255,0.75);
+    max-width: 620px;
+    font-size: 1rem;
+  }
+
+  .howto {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+    gap: 12px;
+    margin-top: 22px;
+  }
+
+  .step {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 16px;
+    padding: 14px 12px;
+  }
+
+  .step-no {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: rgba(0, 167, 160, 0.14);
+    color: #b6f6f0;
+    font-weight: 800;
+    margin-bottom: 10px;
+  }
+
+  .step strong {
+    display: block;
+    font-size: 0.92rem;
+    margin-bottom: 4px;
+  }
+
+  .step span {
+    color: rgba(255,255,255,0.7);
+    font-size: 0.8rem;
+  }
+
+  .promo-stack {
+    position: relative; z-index: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .promo-card {
+    border-radius: 20px;
+    padding: 16px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    min-height: 140px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+
+  .promo-card:first-child {
+    background: linear-gradient(180deg, rgba(255, 208, 94, 0.22), rgba(255,255,255,0.05));
+  }
+
+  .promo-card .label {
+    display: inline-block;
+    align-self: flex-start;
+    border-radius: 999px;
+    padding: 5px 9px;
+    background: rgba(255,255,255,0.12);
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .promo-card strong {
+    font-size: 1.2rem;
+    letter-spacing: -0.04em;
+  }
+
+  .promo-card span {
+    color: rgba(255,255,255,0.72);
+    font-size: 0.8rem;
+  }
+
+  .section {
+    margin-top: 26px;
+    background: rgba(255,255,255,0.7);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    padding: 22px 20px 18px;
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.03);
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .section-head h2 {
+    margin: 0;
+    font-size: clamp(1.5rem, 2vw, 2rem);
+    letter-spacing: -0.05em;
+  }
+
+  .section-head .tag {
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .plan-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+
+  .plan-card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 18px 35px rgba(17, 24, 39, 0.04);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    position: relative;
+    cursor: pointer;
+  }
+
+  .plan-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 20px 30px rgba(17, 24, 39, 0.08);
+  }
+
+  .plan-card:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  .ad-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin: 0 0 18px;
+    padding: 16px 20px;
+    border: 1px dashed rgba(12, 92, 98, .35);
+    border-radius: 18px;
+    background: linear-gradient(120deg, #e5fbf6, #fff8e8);
+  }
+
+  .ad-banner strong { display: block; }
+  .ad-banner p { margin: 3px 0 0; color: var(--muted); font-size: .85rem; }
+  .ad-banner a { color: var(--accent-dark); font-weight: 800; white-space: nowrap; }
+
+  .voucher-login {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 12px;
+  }
+
+  .voucher-login label { margin-top: 0; }
+  .voucher-login .btn { margin: 0; width: auto; white-space: nowrap; }
+  .voucher-result { grid-column: 1 / -1; margin: 0; color: var(--muted); }
+
+  .device-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 12px 0 16px;
+  }
+
+  .device-choice {
+    padding: 10px 8px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    font-size: .82rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .device-choice[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent-dark);
+  }
+
+  .device-status { margin: 8px 0; color: var(--muted); font-size: .82rem; }
+
+  .input-with-action {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .input-with-action button {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0 12px;
+    background: var(--panel-alt);
+    color: var(--accent-dark);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .plan-card.featured::before {
+    content: 'Hot Deal';
+    position: absolute;
+    top: 12px; left: 12px;
+    background: linear-gradient(135deg, var(--amber), #ffdf73);
+    color: #3a2d00;
+    font-weight: 800;
+    font-size: 0.7rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 6px 10px;
+    border-radius: 999px;
+    box-shadow: 0 8px 20px rgba(245, 185, 66, 0.28);
+  }
+
+  .plan-card.popular::after {
+    content: 'Popular';
+    position: absolute;
+    top: 12px; right: 12px;
+    background: #eafaf3;
+    color: var(--success);
+    font-weight: 800;
+    font-size: 0.68rem;
+    padding: 6px 9px;
+    border-radius: 999px;
+  }
+
+  .pack-visual {
+    height: 120px;
+    background: linear-gradient(135deg, #dfeef8, #cbeadf, #fbe7bc);
+    position: relative;
+    display: grid; place-items: center;
+    padding: 18px;
+  }
+
+  .pack-visual::before {
+    content: "";
+    position: absolute;
+    width: 70%; height: 70%;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.45);
+    filter: blur(4px);
+  }
+
+  .pack-visual .signal {
+    position: relative;
+    z-index: 1;
+    width: 90px; height: 90px;
+    border: 2px solid rgba(16, 26, 43, 0.15);
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 2rem;
+    font-weight: 900;
+    color: var(--ink);
+    background: rgba(255,255,255,0.3);
+  }
+
+  .plan-body {
+    padding: 18px 16px 16px;
+  }
+
+  .plan-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .plan-body h3 {
+    margin: 0;
+    font-size: 1.2rem;
+    letter-spacing: -0.04em;
+  }
+
+  .plan-body .sub {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+
+  .plan-footer {
+    margin-top: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .plan-price {
+    font-size: 1.6rem;
+    font-weight: 900;
+    letter-spacing: -0.05em;
+  }
+
+  .plan-price small {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-left: 4px;
+  }
+
+  .plan-btn {
+    border: none;
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--accent), #0e9f9b);
+    color: white;
+    font-weight: 800;
+    cursor: pointer;
+    transition: filter 0.2s ease;
+  }
+
+  .plan-btn:hover { filter: brightness(1.04); }
+
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 18px;
+    margin-top: 18px;
+  }
+
+  .info-box {
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 20px;
+  }
+
+  .info-box h3 {
+    margin: 0 0 12px;
+    font-size: 1.2rem;
+    letter-spacing: -0.04em;
+  }
+
+  .contact-list,
+  .resource-list,
+  .legal-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+  }
+
+  .contact-list li,
+  .resource-list li,
+  .legal-list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--ink);
+    font-weight: 600;
+    padding: 8px 10px;
+    background: var(--panel-alt);
+    border-radius: 12px;
+    border: 1px solid var(--line);
+  }
+
+  .resource-action {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .resource-action:hover,
+  .resource-list a:hover,
+  .contact-list a:hover {
+    color: var(--accent-dark);
+    text-decoration: underline;
+  }
+
+  .footer-note {
+    text-align: center;
+    color: var(--muted);
+    font-weight: 600;
+    margin-top: 22px;
+    padding-bottom: 6px;
+  }
+
+  .sheet-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(9, 14, 24, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 100;
+  }
+
+  .sheet {
+    background: white;
+    width: min(460px, 100%);
+    border-radius: 24px;
+    box-shadow: 0 30px 60px rgba(2, 6, 23, 0.24);
+    overflow: hidden;
+  }
+
+  .sheet-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    background: linear-gradient(135deg, #0b1a2c, #12375d);
+    color: white;
+    padding: 18px 18px 20px;
+  }
+
+  .sheet-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    letter-spacing: -0.04em;
+  }
+
+  .sheet-close {
+    border: none;
+    background: rgba(255,255,255,0.12);
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.2rem;
+    color: white;
+  }
+
+  .sheet-body {
+    padding: 20px 18px 18px;
+  }
+
+  .pay-hero {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
+  .pay-hero .mini-pic {
+    width: 56px; height: 56px; border-radius: 17px;
+    background: linear-gradient(135deg, #dffaf6, #c6f3db);
+    display: grid; place-items: center;
+    font-size: 1.4rem;
+  }
+
+  .pay-hero strong {
+    display: block;
+    font-size: 1rem;
+    margin-bottom: 2px;
+  }
+
+  .pay-hero span {
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+
+  .price-box {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--panel-alt);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px 14px;
+    margin: 16px 0 12px;
+    font-weight: 700;
+  }
+
+  label {
+    display: block;
+    font-weight: 700;
+    color: var(--ink);
+    margin: 8px 0 8px;
+  }
+
+  input[type='tel'],
+  input[type='text'] {
+    width: 100%;
+    padding: 14px 14px;
+    border: 1.5px solid var(--line);
+    border-radius: 12px;
+    font-size: 1rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  input[type='tel']:focus,
+  input[type='text']:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(0, 167, 160, 0.12);
+  }
+
+  .hint {
+    color: var(--muted);
+    font-size: 0.78rem;
+    margin-top: 8px;
+  }
+
+  .error-text {
+    display: none;
+    margin-top: 12px;
+    background: #fdeceb;
+    color: #b72b2b;
+    border: 1px solid #f3c4c4;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 0.8rem;
+  }
+
+  .error-box {
+    grid-column: 1 / -1;
+    padding: 16px;
+    border: 1px solid #f3c4c4;
+    border-radius: 14px;
+    background: #fdeceb;
+    color: #8f2020;
+    text-align: center;
+  }
+
+  .error-box button {
+    display: block;
+    margin: 12px auto 0;
+    padding: 9px 16px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--accent);
+    color: white;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .btn {
+    width: 100%;
+    border: none;
+    border-radius: 999px;
+    padding: 14px 18px;
+    font-family: inherit;
+    font-weight: 800;
+    cursor: pointer;
+    margin-top: 14px;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), #0fa1a2);
+    color: white;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--line);
+  }
+
+  .spinner {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: white;
+    animation: spin .7s linear infinite;
+    display: inline-block;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .status-screen { text-align: center; padding: 10px 4px 4px; }
-  .status-screen .icon { width: 56px; height: 56px; border-radius: 50%; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; }
-  .status-screen .icon.waiting { background: var(--signal-soft); }
-  .status-screen .icon.success { background: #E4F8EC; color: #12894A; }
-  .status-screen .icon.fail { background: #FCEAEC; color: #B4293A; }
-  .status-screen .icon svg { width: 26px; height: 26px; }
-  .status-screen h3 { font-size: 17px; margin-bottom: 6px; }
-  .status-screen p { color: var(--muted); font-size: 13px; margin: 0; }
-
-  .voucher-code {
-    margin: 18px 0; padding: 16px; background: var(--ink); color: #fff; border-radius: 14px;
-    text-align: center; cursor: pointer; position: relative;
+  .status-screen {
+    text-align: center;
+    padding: 20px 8px 10px;
   }
-  .voucher-code .code { font-family: 'IBM Plex Mono', monospace; font-size: 26px; font-weight: 700; letter-spacing: 0.04em; }
-  .voucher-code .tap { font-size: 10.5px; color: #93A2C4; margin-top: 4px; }
 
-  .error-text { background: #FCEAEC; color: #B4293A; font-size: 12.5px; padding: 10px 12px; border-radius: 9px; margin-bottom: 14px; display: none; }
+  .status-icon {
+    width: 60px; height: 60px;
+    margin: 0 auto 16px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 1.5rem;
+    font-weight: 900;
+  }
+
+  .status-icon.waiting { background: var(--accent-soft); color: var(--accent-dark); }
+  .status-icon.success { background: #e7f9ee; color: var(--success); }
+  .status-icon.fail { background: #fdeceb; color: var(--danger); }
+
+  .status-screen h3 {
+    margin: 0 0 8px;
+    font-size: 1.2rem;
+    letter-spacing: -0.04em;
+  }
+
+  .status-screen p {
+    margin: 0;
+    color: var(--muted);
+  }
+
+  .voucher-box {
+    margin: 18px 0 16px;
+    background: #0d1628;
+    color: white;
+    border-radius: 16px;
+    padding: 20px 16px;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .voucher-box .code {
+    font-weight: 900;
+    font-size: 1.8rem;
+    letter-spacing: 0.12em;
+    font-family: 'Inter', monospace;
+  }
+
+  .voucher-box .tap {
+    margin-top: 8px;
+    color: rgba(255,255,255,0.72);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  @media (max-width: 900px) {
+    .hero-card { grid-template-columns: 1fr; }
+    .info-grid { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 560px) {
+    .page-shell { padding-left: 12px; padding-right: 12px; }
+    .topbar { padding: 12px 14px; }
+    .brand-sub { display: none; }
+    .howto { grid-template-columns: 1fr; }
+    .section-head { align-items: flex-start; flex-direction: column; }
+    .ad-banner { align-items: flex-start; flex-direction: column; }
+    .voucher-login { grid-template-columns: 1fr; }
+    .voucher-login .btn { width: 100%; }
+    .device-options { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">N</div>
+        <div class="brand-text">
+          <span class="brand-name">DEVZEN CREATIONS</span>
+          <span class="brand-sub">CONNECT</span>
+        </div>
+      </div>
+      <div class="cta-mini">M-Pesa Internet</div>
+    </header>
 
-<div class="hero">
-  <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 8.5a17 17 0 0120 0"/><path d="M5.5 12.5a11.5 11.5 0 0113 0"/><path d="M9 16.5a6 6 0 016 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg></div>
-  <h1>Nyaururu Net WiFi</h1>
-  <p>Buy a voucher below &mdash; pay with M-Pesa, connect in seconds</p>
-</div>
+    <main>
+      <section class="hero-card">
+        <div class="hero-copy">
+          <div class="eyebrow">Internet access</div>
+          <h1>Connect in seconds.</h1>
+          <p>Choose a package, pay with M-Pesa, and get online fast. Simple, fast, and built for busy homes, offices, and guest WiFi users.</p>
 
-<div class="wrap">
-  <div id="plan-list" class="loading">Loading plans&hellip;</div>
-  <div class="footer" id="footer"></div>
-</div>
-
-<script>
-  // ---- Deployment config ----
-  const API_BASE_URL = localStorage.getItem('hotspot_api_base') || 'http://localhost:8000';
-  const SUPPORT_PHONE = '+254756895962';
-  // ----------------------------
-
-  const Icons = {
-    speed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg>',
-    devices: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="4" width="16" height="11" rx="1.5"/><path d="M8 20h8M12 15v5"/></svg>',
-    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>',
-    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
-    x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M18 6L6 18M6 6l12 12"/></svg>',
-  };
-
-  function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function fmtDuration(hours) {
-    if (hours >= 24 && hours % 24 === 0) { const d = hours / 24; return d === 1 ? '24 Hrs' : `${d} Days`; }
-    if (hours < 1) return `${Math.round(hours * 60)} Min`;
-    return `${hours} Hrs`;
-  }
-
-  async function api(path, opts = {}) {
-    const res = await fetch(`${API_BASE_URL}${path}`, {
-      method: opts.method || 'GET',
-      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    const body = await res.json().catch(() => null);
-    if (!res.ok) throw new Error(body?.message || `Request failed (${res.status})`);
-    return body;
-  }
-
-  async function loadPlans() {
-    const listEl = document.getElementById('plan-list');
-    try {
-      const res = await api('/api/v1/hotspot/plans/public');
-      const plans = (res.data || []).slice().sort((a, b) => a.price - b.price);
-      if (!plans.length) {
-        listEl.innerHTML = '<div class="error-box">No plans are available right now. Please try again shortly.</div>';
-        return;
-      }
-      const maxPrice = Math.max(...plans.map(p => p.price));
-      listEl.className = '';
-      listEl.innerHTML = plans.map(p => `
-        <div class="plan ${p.price === maxPrice ? 'best' : ''}">
-          <div class="left">
-            <div class="duration">${escapeHtml(fmtDuration(p.duration_hours))}</div>
-            <div class="meta">
-              ${p.rate_limit ? `<span>${Icons.speed} Upto ${escapeHtml(p.rate_limit.split('/')[1] || p.rate_limit)}bps</span>` : ''}
-              <span>${Icons.devices} ${p.max_devices || 1} device${(p.max_devices || 1) > 1 ? 's' : ''}</span>
+          <div class="howto">
+            <div class="step">
+              <div class="step-no">1</div>
+              <strong>Click package</strong>
+              <span>Pick a bundle that matches your data needs.</span>
+            </div>
+            <div class="step">
+              <div class="step-no">2</div>
+              <strong>Enter phone</strong>
+              <span>Type the number you want to receive the STK push on.</span>
+            </div>
+            <div class="step">
+              <div class="step-no">3</div>
+              <strong>Complete payment</strong>
+              <span>Confirm the prompt on your phone and start browsing.</span>
             </div>
           </div>
-          <div class="right">
-            <div class="price">${escapeHtml(p.currency || 'KES')} ${Number(p.price).toFixed(0)}</div>
-            <button class="buy" data-plan='${JSON.stringify(p).replace(/'/g, "&#39;")}'>Buy</button>
+        </div>
+
+        <div class="promo-stack">
+          <div class="promo-card">
+            <div class="label">Hot Deal</div>
+            <strong>Unlimited 40 Minutes</strong>
+            <span>Only KES 5</span>
           </div>
-        </div>`).join('');
+          <div class="promo-card">
+            <div class="label">Best Value</div>
+            <strong>Unlimited 30 Days</strong>
+            <span>From KES 900</span>
+          </div>
+        </div>
+      </section>
 
-      listEl.querySelectorAll('[data-plan]').forEach(btn => {
-        btn.onclick = () => openPurchaseSheet(JSON.parse(btn.dataset.plan));
-      });
-    } catch (err) {
-      listEl.className = 'error-box';
-      listEl.innerHTML = `Couldn't load plans. ${escapeHtml(err.message)}`;
-    }
-  }
+      <aside class="ad-banner" aria-label="Business advertising">
+        <div>
+          <strong>Promote your business on DEVZEN CREATIONS WiFi</strong>
+          <p>Reach customers while they connect. Contact us to ask about advertising placements.</p>
+        </div>
+        <a href="mailto:heannjuki@gmail.com?subject=WiFi%20advertising">Advertise here</a>
+      </aside>
 
-  function openPurchaseSheet(plan) {
-    const overlay = document.createElement('div');
-    overlay.className = 'sheet-overlay';
-    overlay.innerHTML = `
-      <div class="sheet" id="sheet-inner">
-        <h3>${escapeHtml(fmtDuration(plan.duration_hours))} Plan</h3>
-        <div class="sub">${plan.rate_limit ? `Upto ${escapeHtml(plan.rate_limit)} &middot; ` : ''}${plan.max_devices || 1} device(s)</div>
-        <div class="big-price">${escapeHtml(plan.currency || 'KES')} ${Number(plan.price).toFixed(0)}</div>
-        <form id="buy-form">
-          <label>M-Pesa phone number</label>
-          <input type="tel" id="phone-input" inputmode="numeric" placeholder="07XXXXXXXX" required/>
-          <div class="hint">We'll send an STK push to this number.</div>
-          <div class="error-text" id="buy-error"></div>
-          <button type="submit" class="btn btn-primary" id="buy-submit">Pay ${escapeHtml(plan.currency || 'KES')} ${Number(plan.price).toFixed(0)}</button>
+      <section class="section" aria-labelledby="voucher-heading">
+        <div class="section-head">
+          <h2 id="voucher-heading">Already have a voucher?</h2>
+          <div class="tag">Check &amp; connect</div>
+        </div>
+        <form class="voucher-login" id="voucher-login-form">
+          <div>
+            <label for="voucher-login-code">Enter your WiFi voucher code</label>
+            <input type="text" id="voucher-login-code" autocomplete="off" maxlength="32" required />
+          </div>
+          <button type="submit" class="btn btn-primary" id="voucher-login-submit">Verify voucher</button>
+          <p class="voucher-result" id="voucher-login-result" role="status" aria-live="polite"></p>
         </form>
-        <button class="btn btn-ghost" id="cancel-btn">Cancel</button>
-      </div>`;
-    document.body.appendChild(overlay);
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-    document.getElementById('cancel-btn').onclick = () => overlay.remove();
+      </section>
 
-    document.getElementById('buy-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const raw = document.getElementById('phone-input').value.trim();
-      const errBox = document.getElementById('buy-error');
-      errBox.style.display = 'none';
+      <section class="section">
+        <div class="section-head">
+          <h2>Internet packages</h2>
+          <div class="tag">Live bundles</div>
+        </div>
+        <div id="plan-list" class="plan-grid"></div>
+      </section>
 
-      // Normalize 07XXXXXXXX / 7XXXXXXXX / 2547XXXXXXXX / +2547XXXXXXXX -> 2547XXXXXXXX
-      let phone = raw.replace(/\D/g, '');
-      if (phone.startsWith('0')) phone = '254' + phone.slice(1);
-      else if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
-      else if (phone.startsWith('254')) { /* already fine */ }
-      if (!/^254(7|1)\d{8}$/.test(phone)) {
-        errBox.textContent = 'Enter a valid Safaricom number, e.g. 0712345678';
-        errBox.style.display = 'block';
+      <div class="info-grid">
+        <section class="info-box">
+          <h3>Contact</h3>
+          <ul class="contact-list">
+            <li><a href="tel:0791196121">0791196121</a></li>
+            <li><a href="mailto:heannjuki@gmail.com">heannjuki@gmail.com</a></li>
+          </ul>
+        </section>
+
+        <section class="info-box">
+          <h3>Resources</h3>
+          <ul class="resource-list">
+            <li><button class="resource-action" type="button" id="check-balance">Check voucher balance</button></li>
+            <li><button class="resource-action" type="button" id="free-trial">Free trial</button></li>
+            <li><span>My IP: <strong id="client-ip">Not provided by hotspot</strong></span></li>
+          </ul>
+        </section>
+      </div>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Privacy &amp; service terms</h2>
+        </div>
+        <p>For the DEVZEN CREATIONS privacy policy or service terms, contact <a href="mailto:heannjuki@gmail.com">heannjuki@gmail.com</a>.</p>
+      </section>
+    </main>
+
+    <div class="footer-note">© 2026 DEVZEN CREATIONS | All Rights Reserved.</div>
+  </div>
+
+  <script>
+    function getDefaultApiBase() {
+      if (typeof window === 'undefined') return 'http://localhost:8000';
+      const { protocol, hostname, port } = window.location;
+      const localHosts = ['localhost', '127.0.0.1', '0.0.0.0'];
+      if (localHosts.includes(hostname) && port && port !== '8080') return 'http://localhost:8000';
+      if (protocol === 'file:') return 'http://localhost:8000';
+      return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
+    }
+
+    const API_BASE_URL = localStorage.getItem('hotspot_api_base') || getDefaultApiBase();
+    const SUPPORT_PHONE = '+254791196121';
+    const SUPPORT_EMAIL = 'heannjuki@gmail.com';
+    const PORTAL_PARAMS = new URLSearchParams(window.location.search);
+    const CLIENT_MAC = PORTAL_PARAMS.get('mac')
+      || PORTAL_PARAMS.get('client_mac')
+      || PORTAL_PARAMS.get('mac-address')
+      || PORTAL_PARAMS.get('calling_station_id')
+      || '';
+    const CLIENT_IP = PORTAL_PARAMS.get('ip')
+      || PORTAL_PARAMS.get('client_ip')
+      || PORTAL_PARAMS.get('address')
+      || '';
+
+    function getCaptiveLoginUrl() {
+      const rawUrl = PORTAL_PARAMS.get('login_url');
+      if (!rawUrl) return null;
+
+      try {
+        const loginUrl = new URL(rawUrl);
+        const host = loginUrl.hostname.toLowerCase();
+        const ipv4 = host.split('.').map(Number);
+        const privateIpv4 = ipv4.length === 4
+          && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+          && (
+            ipv4[0] === 10
+            || (ipv4[0] === 172 && ipv4[1] >= 16 && ipv4[1] <= 31)
+            || (ipv4[0] === 192 && ipv4[1] === 168)
+          );
+        const localDnsName = /(?:^|\.)[\w-]+\.(?:lan|local|hotspot)$/.test(host);
+        const expectedPath = loginUrl.pathname === '/login' || loginUrl.pathname === '/login/';
+
+        if (
+          !['http:', 'https:'].includes(loginUrl.protocol)
+          || loginUrl.username
+          || loginUrl.password
+          || !expectedPath
+          || !['', '80', '443'].includes(loginUrl.port)
+          || (!privateIpv4 && !localDnsName)
+          || (window.location.protocol === 'https:' && loginUrl.protocol !== 'https:')
+        ) {
+          return null;
+        }
+
+        return loginUrl.href;
+      } catch {
+        return null;
+      }
+    }
+
+    function getCaptiveDestination() {
+      const rawDestination = PORTAL_PARAMS.get('dst');
+      if (!rawDestination) return '';
+
+      try {
+        const destination = new URL(rawDestination);
+        if (!['http:', 'https:'].includes(destination.protocol)) return '';
+        return destination.href;
+      } catch {
+        return '';
+      }
+    }
+
+    function voucherLoginMarkup(voucherCode) {
+      const loginUrl = getCaptiveLoginUrl();
+      if (!loginUrl) {
+        return '<p>Enter this code on the MikroTik WiFi login page to connect. If it does not appear, open a new web page to trigger it.</p>';
+      }
+
+      const destination = getCaptiveDestination();
+      return `
+        <form action="${escapeHtml(loginUrl)}" method="post">
+          <input type="hidden" name="username" value="${escapeHtml(voucherCode)}">
+          <input type="hidden" name="password" value="${escapeHtml(voucherCode)}">
+          ${destination ? `<input type="hidden" name="dst" value="${escapeHtml(destination)}">` : ''}
+          <button class="btn btn-primary" type="submit">Connect to WiFi</button>
+        </form>
+        <p>If automatic sign-in does not work, use the voucher code on the MikroTik WiFi login page.</p>`;
+    }
+
+    const Icons = {
+      wifi: '📶',
+      bolt: '⚡',
+      clock: '⏱',
+      device: '📱',
+      check: '✓',
+      x: '×'
+    };
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+
+    function fmtDuration(hours) {
+      if (hours >= 24 && hours % 24 === 0) {
+        const days = hours / 24;
+        return days === 1 ? '24 Hours' : `${days} Days`;
+      }
+      if (hours < 1) return `${Math.round(hours * 60)} Minutes`;
+      return `${hours} Hours`;
+    }
+
+    async function api(path, opts = {}) {
+      let res;
+      try {
+        res = await fetch(`${API_BASE_URL}${path}`, {
+          method: opts.method || 'GET',
+          headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+          body: opts.body ? JSON.stringify(opts.body) : undefined,
+        });
+      } catch (cause) {
+        const error = new Error(`Cannot reach DEVZEN CREATIONS services at ${API_BASE_URL}. Check that the app and API are running.`);
+        error.cause = cause;
+        throw error;
+      }
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        const error = new Error(body?.message || `Request failed (${res.status})`);
+        error.status = res.status;
+        throw error;
+      }
+      return body;
+    }
+
+    function showResourceDialog(title, content) {
+      document.querySelector('.sheet-overlay')?.remove();
+      const overlay = document.createElement('div');
+      overlay.className = 'sheet-overlay';
+      overlay.innerHTML = `
+        <div class="sheet" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+          <div class="sheet-header">
+            <h3>${escapeHtml(title)}</h3>
+            <button class="sheet-close" type="button" aria-label="Close">×</button>
+          </div>
+          <div class="sheet-body">${content}</div>
+        </div>`;
+      document.body.appendChild(overlay);
+      overlay.querySelector('.sheet-close').addEventListener('click', () => overlay.remove());
+      overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) overlay.remove();
+      });
+      return overlay;
+    }
+
+    function openBalanceCheck() {
+      const overlay = showResourceDialog('Check voucher balance', `
+        <p>Enter your DEVZEN CREATIONS WiFi voucher code to check whether it is active.</p>
+        <form id="balance-form">
+          <label for="voucher-code">Voucher code</label>
+          <input type="text" id="voucher-code" name="voucher_code" autocomplete="off" required maxlength="32" />
+          <div class="error-text" id="balance-result" role="status"></div>
+          <button type="submit" class="btn btn-primary" id="balance-submit">Check balance</button>
+        </form>`);
+      const result = overlay.querySelector('#balance-result');
+      overlay.querySelector('#balance-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const code = overlay.querySelector('#voucher-code').value.trim();
+        const submit = overlay.querySelector('#balance-submit');
+        result.style.display = 'none';
+        submit.disabled = true;
+        submit.textContent = 'Checking…';
+        try {
+          const response = await api(`/api/v1/vouchers/public/check/${encodeURIComponent(code)}`);
+          const voucher = response.data;
+          const expiry = voucher.expiry_date ? new Date(voucher.expiry_date).toLocaleString() : 'Not specified';
+          const allowance = voucher.data_allowance_mb == null ? 'Unlimited data' : `${voucher.data_allowance_mb} MB`;
+          result.textContent = voucher.valid
+            ? `Voucher is active. ${voucher.duration_hours ?? '—'} hours, ${allowance}. Expires: ${expiry}.`
+            : (voucher.reason || 'This voucher is not active.');
+          result.style.display = 'block';
+        } catch (error) {
+          result.textContent = error.message;
+          result.style.display = 'block';
+        } finally {
+          submit.disabled = false;
+          submit.textContent = 'Check balance';
+        }
+      });
+      overlay.querySelector('#voucher-code').focus();
+    }
+
+    function openFreeTrial() {
+      if (!CLIENT_MAC) {
+        showResourceDialog('Free trial access', `
+          <p>This three-minute trial is issued once per device. Open this page from the DEVZEN CREATIONS MikroTik captive portal so it can provide your device MAC address.</p>
+          <p>If the hotspot opened this page but the device could not be identified, contact support:</p>
+          <p><a href="tel:${SUPPORT_PHONE}">${SUPPORT_PHONE}</a><br/><a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a></p>`);
         return;
       }
 
-      const btn = document.getElementById('buy-submit');
-      btn.disabled = true;
-      btn.innerHTML = '<span class="spinner"></span> Sending request&hellip;';
-      try {
-        const res = await api('/api/v1/hotspot/purchase', { method: 'POST', body: { plan_id: plan._id, phone_number: phone } });
-        showWaitingScreen(overlay, res.data.checkout_request_id);
-      } catch (err) {
-        errBox.textContent = err.message || 'Something went wrong. Please try again.';
-        errBox.style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = `Pay ${plan.currency || 'KES'} ${Number(plan.price).toFixed(0)}`;
-      }
-    });
-  }
-
-  function showWaitingScreen(overlay, checkoutRequestId) {
-    const sheet = document.getElementById('sheet-inner');
-    sheet.innerHTML = `
-      <div class="status-screen">
-        <div class="icon waiting"><div class="spinner" style="border-color:rgba(6,59,54,.25);border-top-color:#063B36;"></div></div>
-        <h3>Check your phone</h3>
-        <p>Enter your M-Pesa PIN to complete the payment. This page will update automatically.</p>
-      </div>`;
-
-    let attempts = 0;
-    const maxAttempts = 30; // ~90 seconds at 3s intervals
-    const poll = setInterval(async () => {
-      attempts++;
-      try {
-        const res = await api(`/api/v1/hotspot/purchase/status/${checkoutRequestId}`);
-        const { status, voucher_code, result_desc } = res.data;
-
-        if (status === 'success' && voucher_code) {
-          clearInterval(poll);
-          showSuccessScreen(sheet, voucher_code);
-        } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
-          clearInterval(poll);
-          showFailScreen(sheet, result_desc || 'The payment was not completed.');
-        } else if (attempts >= maxAttempts) {
-          clearInterval(poll);
-          showFailScreen(sheet, "We didn't hear back in time. If M-Pesa deducted your money, contact support below.");
+      const overlay = showResourceDialog('Free 3-minute trial', `
+        <div id="trial-content">
+          <p>Get one free 3-minute WiFi session for this device. The voucher expires if it is not used within 10 minutes.</p>
+          <button type="button" class="btn btn-primary" id="request-trial">Start free trial</button>
+          <div class="error-text" id="trial-result" role="status"></div>
+        </div>`);
+      const button = overlay.querySelector('#request-trial');
+      const result = overlay.querySelector('#trial-result');
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        button.textContent = 'Preparing trial…';
+        result.style.display = 'none';
+        try {
+          const response = await api('/api/v1/hotspot/free-trial', {
+            method: 'POST',
+            body: { client_mac: CLIENT_MAC }
+          });
+          const trial = response.data;
+          overlay.querySelector('#trial-content').innerHTML = `
+            <p>Your 3-minute trial is ready. Use this voucher to sign in:</p>
+            <div class="voucher-box">
+              <div class="code">${escapeHtml(trial.voucher_code)}</div>
+            </div>
+            ${voucherLoginMarkup(trial.voucher_code)}
+            <p>Use it before ${escapeHtml(new Date(trial.redeem_before).toLocaleTimeString())}. This device can claim a trial once.</p>`;
+        } catch (error) {
+          result.textContent = error.status === 409
+            ? 'This device has already claimed its free trial.'
+            : error.message;
+          result.style.display = 'block';
+          button.disabled = false;
+          button.textContent = 'Start free trial';
         }
-      } catch (err) {
-        if (attempts >= maxAttempts) {
-          clearInterval(poll);
-          showFailScreen(sheet, 'Connection lost while checking your payment status.');
-        }
-      }
-    }, 3000);
-  }
+      });
+    }
 
-  function showSuccessScreen(sheet, voucherCode) {
-    sheet.innerHTML = `
-      <div class="status-screen">
-        <div class="icon success">${Icons.check}</div>
-        <h3>You're connected!</h3>
-        <p>Enter this code when the WiFi login box asks for a username.</p>
-        <div class="voucher-code" id="voucher-copy">
-          <div class="code">${escapeHtml(voucherCode)}</div>
-          <div class="tap">Tap to copy</div>
+    function getPlanAccentLabel(plan) {
+      if (plan.price <= 20) return 'Hot Deal';
+      if (plan.price >= 100) return 'Best Value';
+      return 'Popular';
+    }
+
+    function formatDataAllowance(plan) {
+      if (plan.data_allowance_mb == null) return 'Unlimited data';
+      const mb = Number(plan.data_allowance_mb);
+      const cap = `${new Intl.NumberFormat().format(mb)} MB total`;
+      const bonus = String(plan.description || '').match(/(?:\+\s*[\d.]+\s*(?:GB|MB)\s*BONUS|BONUS\s*[\d.]+\s*(?:GB|MB))/i);
+      return bonus ? `${cap} · ${bonus[0]}` : cap;
+    }
+
+    function getPlanClass(plan) {
+      if (plan.price <= 20) return 'featured';
+      if (plan.price >= 100) return 'popular';
+      return '';
+    }
+
+    async function loadPlans() {
+      const listEl = document.getElementById('plan-list');
+      try {
+        let res;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            res = await api('/api/v1/hotspot/plans/public');
+            break;
+          } catch (error) {
+            const canRetry = [502, 503, 504].includes(error.status) && attempt < 2;
+            if (!canRetry) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+          }
+        }
+        const plans = (res.data || []).slice().sort((a, b) => Number(a.price) - Number(b.price));
+
+        if (!plans.length) {
+          listEl.innerHTML = '<div class="error-box">No plans are available right now. Please try again shortly.</div>';
+          return;
+        }
+
+        listEl.innerHTML = plans.map((plan, index) => {
+          const title = plan.name || plan.description || 'Internet bundle';
+          const cardClass = getPlanClass(plan);
+          const label = getPlanAccentLabel(plan);
+          const duration = fmtDuration(Number(plan.duration_hours || 1));
+          const rate = plan.rate_limit || 'Up to 10 Mbps';
+          const devices = plan.max_devices || 1;
+          return `
+            <article class="plan-card ${cardClass}" data-plan-index="${index}" tabindex="0" role="button" aria-label="Select ${escapeHtml(title)}">
+              <div class="pack-visual">
+                <div class="signal">${Icons.wifi}</div>
+              </div>
+              <div class="plan-body">
+                <div class="plan-meta">
+                  <span>${label}</span>
+                  <span>${duration}</span>
+                </div>
+                <h3>${escapeHtml(title)}</h3>
+                <div class="sub">${escapeHtml(formatDataAllowance(plan))}</div>
+                <div class="sub">${escapeHtml(rate)} · Up to ${devices} device${devices > 1 ? 's' : ''}</div>
+                ${plan.description ? `<div class="sub">${escapeHtml(plan.description)}</div>` : ''}
+                <div class="plan-footer">
+                  <div class="plan-price">KES ${Number(plan.price || 0).toFixed(0)}<small>/</small></div>
+                  <span class="plan-btn">View package</span>
+                </div>
+              </div>
+            </article>
+          `;
+        }).join('');
+
+        listEl.querySelectorAll('[data-plan-index]').forEach((card) => {
+          const selectCard = () => openPurchaseSheet(plans[Number(card.dataset.planIndex)]);
+          card.addEventListener('click', selectCard);
+          card.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              selectCard();
+            }
+          });
+        });
+      } catch (error) {
+        listEl.innerHTML = `<div class="error-box">Couldn't load packages right now. ${escapeHtml(error.message)}<button type="button" id="retry-plans">Try again</button></div>`;
+        listEl.querySelector('#retry-plans').addEventListener('click', loadPlans);
+      }
+    }
+
+    function openPurchaseSheet(plan) {
+      const overlay = document.createElement('div');
+      overlay.className = 'sheet-overlay';
+      const devices = Number(plan.max_devices || 1);
+      overlay.innerHTML = `
+        <div class="sheet">
+          <div class="sheet-header">
+            <h3>Complete payment</h3>
+            <button class="sheet-close" type="button" aria-label="Close">×</button>
+          </div>
+          <div class="sheet-body">
+            <div class="pay-hero">
+              <div class="mini-pic">${Icons.wifi}</div>
+              <div>
+                <strong>${escapeHtml(plan.name || plan.description || 'Internet bundle')}</strong>
+                <span>${escapeHtml(fmtDuration(Number(plan.duration_hours || 1)))}</span>
+              </div>
+            </div>
+            <div class="price-box"><span>Data allowance</span><strong>${escapeHtml(formatDataAllowance(plan))}</strong></div>
+            <div class="price-box"><span>Devices supported</span><strong>Up to ${devices}</strong></div>
+            <div class="price-box"><span>Speed</span><strong>${escapeHtml(plan.rate_limit || 'Standard hotspot speed')}</strong></div>
+            ${plan.description ? `<p>${escapeHtml(plan.description)}</p>` : ''}
+            <div class="price-box">
+              <span>You are paying for:</span>
+              <strong>KES ${Number(plan.price || 0).toFixed(0)}</strong>
+            </div>
+            <form id="buy-form">
+              <label>Who are you buying access for?</label>
+              <div class="device-options" role="group" aria-label="Purchase device">
+                <button class="device-choice" type="button" data-device="this_device" aria-pressed="true">This device</button>
+                <button class="device-choice" type="button" data-device="tv" aria-pressed="false">TV</button>
+                <button class="device-choice" type="button" data-device="other" aria-pressed="false">Other device</button>
+              </div>
+              <div id="target-device-fields"></div>
+              <div id="device-status" class="device-status" role="status" aria-live="polite"></div>
+              <label for="phone-input">M-Pesa number</label>
+              <input type="tel" id="phone-input" inputmode="numeric" placeholder="0712345678" required />
+              <div class="hint">We will send an STK push to this number.</div>
+              <div class="error-text" id="buy-error"></div>
+              <button type="submit" class="btn btn-primary" id="buy-submit">Complete payment · KES ${Number(plan.price || 0).toFixed(0)}</button>
+              <button type="button" class="btn btn-ghost" id="cancel-btn">Cancel</button>
+            </form>
+          </div>
         </div>
-        <button class="btn btn-primary" id="done-btn">Done</button>
-      </div>`;
-    document.getElementById('voucher-copy').onclick = () => {
-      navigator.clipboard?.writeText(voucherCode);
-      const tap = document.querySelector('.voucher-code .tap');
-      if (tap) tap.textContent = 'Copied!';
-    };
-    document.getElementById('done-btn').onclick = () => document.querySelector('.sheet-overlay')?.remove();
-  }
+      `;
 
-  function showFailScreen(sheet, message) {
-    sheet.innerHTML = `
-      <div class="status-screen">
-        <div class="icon fail">${Icons.x}</div>
-        <h3>Payment not completed</h3>
-        <p>${escapeHtml(message)}</p>
-        <button class="btn btn-primary" id="retry-btn" style="margin-top:18px;">Try again</button>
-      </div>`;
-    document.getElementById('retry-btn').onclick = () => document.querySelector('.sheet-overlay')?.remove();
-  }
+      document.body.appendChild(overlay);
+      const close = () => overlay.remove();
+      overlay.querySelector('.sheet-close').onclick = close;
+      overlay.querySelector('#cancel-btn').onclick = close;
 
-  document.getElementById('footer').innerHTML = `Need help? <a href="tel:${SUPPORT_PHONE}">${escapeHtml(SUPPORT_PHONE)}</a>`;
-  loadPlans();
-</script>
+      let selectedDevice = 'this_device';
+      let verifiedMac = '';
+      const targetFields = overlay.querySelector('#target-device-fields');
+      const deviceStatus = overlay.querySelector('#device-status');
+      const normalizeMac = (mac) => String(mac || '').replace(/-/g, ':').toUpperCase();
+      const setVerified = (mac) => {
+        verifiedMac = normalizeMac(mac);
+        deviceStatus.textContent = 'Device verified';
+        deviceStatus.dataset.verified = 'true';
+      };
+      const verifyByLookup = async (payload) => {
+        deviceStatus.textContent = '';
+        deviceStatus.dataset.verified = 'false';
+        try {
+          const response = await api('/api/v1/hotspot/devices/lookup', { method: 'POST', body: payload });
+          setVerified(response.data.mac_address);
+        } catch (error) {
+          verifiedMac = '';
+          deviceStatus.textContent = error.message;
+        }
+      };
+      const renderDeviceFields = () => {
+        verifiedMac = '';
+        deviceStatus.dataset.verified = 'false';
+        if (selectedDevice === 'this_device') {
+          if (CLIENT_MAC) {
+            setVerified(CLIENT_MAC);
+          } else {
+            targetFields.replaceChildren();
+            if (CLIENT_IP) {
+              verifyByLookup({ ip_address: CLIENT_IP });
+            } else {
+              deviceStatus.textContent = 'Device could not be identified automatically.';
+            }
+          }
+        } else if (selectedDevice === 'tv') {
+          targetFields.innerHTML = '<label for="target-device-id">TV MAC address</label><div class="input-with-action"><input type="text" id="target-device-id" placeholder="TV MAC address" required/><button type="button" id="verify-device">Verify</button></div>';
+          targetFields.querySelector('#verify-device').onclick = () => {
+            const value = targetFields.querySelector('#target-device-id').value.trim();
+            verifyByLookup({ mac_address: value });
+          };
+        } else {
+          targetFields.innerHTML = '<label for="target-device-id">Device MAC address</label><div class="input-with-action"><input type="text" id="target-device-id" placeholder="Device MAC address" required/><button type="button" id="verify-device">Verify</button></div>';
+          targetFields.querySelector('#verify-device').onclick = () => {
+            const value = targetFields.querySelector('#target-device-id').value.trim();
+            verifyByLookup({ mac_address: value });
+          };
+        }
+        targetFields.querySelectorAll('input').forEach((input) => {
+          input.addEventListener('input', () => {
+            verifiedMac = '';
+            deviceStatus.dataset.verified = 'false';
+            deviceStatus.textContent = '';
+          });
+        });
+      };
+      overlay.querySelectorAll('[data-device]').forEach((choice) => {
+        choice.addEventListener('click', () => {
+          selectedDevice = choice.dataset.device;
+          overlay.querySelectorAll('[data-device]').forEach((button) => {
+            button.setAttribute('aria-pressed', String(button === choice));
+          });
+          renderDeviceFields();
+        });
+      });
+      renderDeviceFields();
+
+      overlay.querySelector('#buy-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const phoneInput = document.getElementById('phone-input');
+        const errBox = document.getElementById('buy-error');
+        const submitBtn = document.getElementById('buy-submit');
+        errBox.style.display = 'none';
+
+        if (!verifiedMac || deviceStatus.dataset.verified !== 'true') {
+          errBox.textContent = 'Verify the device before payment.';
+          errBox.style.display = 'block';
+          return;
+        }
+
+        let raw = phoneInput.value.trim();
+        let phone = raw.replace(/\D/g, '');
+        if (phone.startsWith('0')) phone = '254' + phone.slice(1);
+        else if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
+        if (!/^254(7|1)\d{8}$/.test(phone)) {
+          errBox.textContent = 'Enter a valid Safaricom number, e.g. 0712345678';
+          errBox.style.display = 'block';
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner"></span>Sending request...';
+
+        try {
+          const res = await api('/api/v1/hotspot/purchase', {
+            method: 'POST',
+            body: {
+              plan_id: plan._id,
+              phone_number: phone,
+              device_type: selectedDevice,
+              device_mac: verifiedMac
+            }
+          });
+          showWaitingScreen(overlay, res.data.checkout_request_id);
+        } catch (error) {
+          errBox.textContent = error.message || 'Something went wrong. Please try again.';
+          errBox.style.display = 'block';
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Pay Now';
+        }
+      });
+    }
+
+    function showWaitingScreen(overlay, checkoutRequestId) {
+      const sheet = overlay.querySelector('.sheet-body');
+      sheet.innerHTML = `
+        <div class="status-screen">
+          <div class="status-icon waiting">${Icons.clock}</div>
+          <h3>Check your phone</h3>
+          <p>Enter your M-Pesa PIN to complete the payment. This page will update automatically.</p>
+        </div>
+      `;
+
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts += 1;
+        try {
+          const res = await api(`/api/v1/hotspot/purchase/status/${checkoutRequestId}`);
+          const { status, voucher_code, result_desc } = res.data || {};
+
+          if (status === 'success' && voucher_code) {
+            clearInterval(poll);
+            showSuccessScreen(sheet, voucher_code);
+          } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
+            clearInterval(poll);
+            showFailScreen(sheet, result_desc || 'The payment was not completed.');
+          } else if (attempts >= 30) {
+            clearInterval(poll);
+            showFailScreen(sheet, 'We did not get a payment confirmation in time. Please contact support.');
+          }
+        } catch (error) {
+          if (attempts >= 30) {
+            clearInterval(poll);
+            showFailScreen(sheet, 'Connection lost while checking your payment status.');
+          }
+        }
+      }, 3000);
+    }
+
+    function showSuccessScreen(sheet, voucherCode) {
+      sheet.innerHTML = `
+        <div class="status-screen">
+          <div class="status-icon success">${Icons.check}</div>
+          <h3>Payment complete</h3>
+          <p>Your voucher is ready. Use it to sign in to the WiFi network.</p>
+          <div class="voucher-box" id="voucher-copy">
+            <div class="code">${escapeHtml(voucherCode)}</div>
+            <div class="tap">Tap to copy</div>
+          </div>
+          ${voucherLoginMarkup(voucherCode)}
+          <button class="btn btn-primary" id="done-btn">Done</button>
+        </div>
+      `;
+
+      document.getElementById('voucher-copy').onclick = () => {
+        navigator.clipboard?.writeText(voucherCode);
+        const tap = document.querySelector('.voucher-box .tap');
+        if (tap) tap.textContent = 'Copied!';
+      };
+      document.getElementById('done-btn').onclick = () => document.querySelector('.sheet-overlay')?.remove();
+    }
+
+    function showFailScreen(sheet, message) {
+      sheet.innerHTML = `
+        <div class="status-screen">
+          <div class="status-icon fail">${Icons.x}</div>
+          <h3>Payment not completed</h3>
+          <p>${escapeHtml(message)}</p>
+          <button class="btn btn-primary" id="retry-btn" style="margin-top: 18px;">Try again</button>
+        </div>
+      `;
+      document.getElementById('retry-btn').onclick = () => document.querySelector('.sheet-overlay')?.remove();
+    }
+
+    loadPlans();
+    document.getElementById('check-balance').addEventListener('click', openBalanceCheck);
+    document.getElementById('free-trial').addEventListener('click', openFreeTrial);
+    const clientIp = CLIENT_IP;
+    if (clientIp) document.getElementById('client-ip').textContent = clientIp;
+  </script>
 </body>
 </html>

@@ -1,0 +1,11 @@
+services:
+  radius:
+    build:
+      context: ./radius
+    container_name: devzen-freeradius
+    env_file:
+      - .env.radius
+    ports:
+      - "${RADIUS_BIND_IP:?Set to the VPS VPN/private interface IP}:1812:1812/udp"
+      - "${RADIUS_BIND_IP:?Set to the VPS VPN/private interface IP}:1813:1813/udp"
+    restart: unless-stopped

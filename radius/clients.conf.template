@@ -1,0 +1,12 @@
+client localhost {
+    ipaddr = 127.0.0.1
+    secret = ${RADIUS_SECRET}
+    nas_type = other
+}
+
+client mikrotik {
+    ipaddr = ${MIKROTIK_NAS_CIDR}
+    secret = ${RADIUS_SECRET}
+    nas_type = mikrotik
+    require_message_authenticator = no
+}

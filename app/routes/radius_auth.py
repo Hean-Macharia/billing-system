@@ -1,15 +1,15 @@
 """RADIUS internal endpoints for FreeRADIUS rlm_rest.
 
 These endpoints are called by FreeRADIUS, NOT by end users.
-They should be protected by IP whitelist and/or shared secret.
+They require a shared secret and should only be reachable by FreeRADIUS.
 """
+import hmac
 from fastapi import APIRouter, Depends, Request, Header, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.dependencies import get_db
 from typing import Optional
 
 from app.core.config import settings
-from app.core.database import database
 from app.core.logging import get_logger
 from app.schemas.radius_auth import RadiusAccountingRequest, RadiusAuthRequest
 from app.services.radius_auth_service import RadiusAuthService
@@ -18,14 +18,17 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/radius", tags=["RADIUS Internal"], include_in_schema=False)
 
 
-def verify_radius_secret(x_radius_secret: str = Header(None, alias="X-RADIUS-Secret")):
+def verify_radius_secret(x_radius_api_secret: Optional[str] = Header(default=None, alias="X-RADIUS-API-Secret")):
     """Verify shared secret from FreeRADIUS."""
-    expected = getattr(settings, "RADIUS_SECRET", "")
+    expected = (settings.radius_api_secret or "").strip()
     if not expected:
-        logger.warning("RADIUS_SECRET not configured, skipping secret check")
-        return True
-    if not x_radius_secret or x_radius_secret != expected:
-        logger.warning(f"Invalid RADIUS secret from caller")
+        logger.error("RADIUS_API_SECRET is not configured; refusing internal RADIUS request")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RADIUS integration is not configured",
+        )
+    if not x_radius_api_secret or not hmac.compare_digest(x_radius_api_secret, expected):
+        logger.warning("Invalid RADIUS secret from caller")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid RADIUS secret")
     return True
 

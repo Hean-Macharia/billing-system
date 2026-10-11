@@ -55,6 +55,9 @@ class SubscriptionService:
         sub_doc["created_at"] = datetime.now(timezone.utc)
         sub_doc["updated_at"] = datetime.now(timezone.utc)
 
+        if not sub_doc.get("end_date") and data.contract_months:
+            sub_doc["end_date"] = data.start_date + timedelta(days=30 * data.contract_months)
+
         result = await self.collection.insert_one(sub_doc)
         sub_doc["_id"] = str(result.inserted_id)
         logger.info(f"Subscription created: {sub_doc['plan_name']} for {sub_doc['customer_code']}")

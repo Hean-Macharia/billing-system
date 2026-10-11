@@ -210,7 +210,7 @@ def _build_receipt_pdf(payment: dict, customer: dict) -> bytes:
     c.setFont("Helvetica-Bold", 16)
     c.drawString(20 * mm, h - 20 * mm, "Payment Receipt")
     c.setFont("Helvetica", 9)
-    c.drawString(20 * mm, h - 27 * mm, "Nyaururu Net ISP")
+    c.drawString(20 * mm, h - 27 * mm, "DEVZEN CREATIONS")
 
     c.setFont("Helvetica", 10)
     y = h - 42 * mm

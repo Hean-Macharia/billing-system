@@ -30,6 +30,13 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1)
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v):
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
 
 class UserRegister(BaseModel):
     """User registration request."""
@@ -39,6 +46,20 @@ class UserRegister(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
     phone: Optional[str] = None
     role: UserRole = UserRole.CUSTOMER
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v):
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, v):
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
     @field_validator("password")
     @classmethod
@@ -68,8 +89,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        populate_by_name = True
+    model_config = {"populate_by_name": True}
 
 
 class UserUpdate(BaseModel):

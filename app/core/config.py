@@ -1,16 +1,26 @@
 """Application configuration using Pydantic Settings.
-Matches the user's .env file exactly: MONGODB_URL, JWT_SECRET_KEY, APP_VERSION, MPESA_*.
+This module intentionally avoids hard-coded production secrets and enforces
+strong environment variables when the app is running in production mode.
 """
 from typing import List, Optional
-from pydantic_settings import BaseSettings
-from pydantic import Field, field_validator
+import os
+
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Production-grade application settings."""
 
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
     # Application
-    app_name: str = Field(default="ISP Billing System", alias="APP_NAME")
+    app_name: str = Field(default="DEVZEN CREATIONS", alias="APP_NAME")
     app_version: str = Field(default="1.0.0", alias="APP_VERSION")
     app_env: str = Field(default="development", alias="APP_ENV")
     debug: bool = Field(default=False, alias="DEBUG")
@@ -24,31 +34,26 @@ class Settings(BaseSettings):
     mongodb_max_idle_time_ms: int = Field(default=60000, alias="MONGODB_MAX_IDLE_TIME_MS")
 
     # JWT
-    jwt_secret_key: str = Field(
-        default="dev-jwt-secret-change-in-production-min-32-chars-long",
-        alias="JWT_SECRET_KEY"
-    )
+    jwt_secret_key: str = Field(default="", alias="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
     refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
 
     # RADIUS
-    radius_secret: str = Field(default="dev-radius-secret-change-me", alias="RADIUS_SECRET")
+    radius_secret: str = Field(default="", alias="RADIUS_SECRET")
+    radius_api_secret: str = Field(default="", alias="RADIUS_API_SECRET")
     radius_host: str = Field(default="radius", alias="RADIUS_HOST")
     radius_auth_port: int = Field(default=1812, alias="RADIUS_AUTH_PORT")
     radius_acct_port: int = Field(default=1813, alias="RADIUS_ACCT_PORT")
 
-    # M-Pesa (Phase 5)
+    # M-Pesa
     mpesa_environment: str = Field(default="sandbox", alias="MPESA_ENVIRONMENT")
 
-    # Automation (Phase 11)
+    # Automation
     scheduler_enabled: bool = Field(default=True, alias="SCHEDULER_ENABLED")
     billing_grace_period_days: int = Field(default=3, alias="BILLING_GRACE_PERIOD_DAYS")
 
-    # Notifications - always logged to the database regardless of these;
-    # SMS is only attempted if both are set, and any failure is caught and
-    # logged rather than raised (a notification failure must never break
-    # the billing/suspension flow that triggered it).
+    # Notifications
     africas_talking_username: Optional[str] = Field(default=None, alias="AFRICAS_TALKING_USERNAME")
     africas_talking_api_key: Optional[str] = Field(default=None, alias="AFRICAS_TALKING_API_KEY")
     africas_talking_sender_id: Optional[str] = Field(default=None, alias="AFRICAS_TALKING_SENDER_ID")
@@ -60,29 +65,32 @@ class Settings(BaseSettings):
 
     # Security
     cors_origins: List[str] = Field(default=["http://localhost:3000"], alias="CORS_ORIGINS")
-    allowed_hosts: List[str] = Field(default=["localhost", "127.0.0.1"], alias="ALLOWED_HOSTS")
+    allowed_hosts: List[str] = Field(default=["localhost", "127.0.0.1", "test", "testserver"], alias="ALLOWED_HOSTS")
     rate_limit_per_minute: int = Field(default=100, alias="RATE_LIMIT_PER_MINUTE")
     router_encryption_key: str = Field(default="", alias="ROUTER_ENCRYPTION_KEY")
     timezone: str = Field(default="Africa/Nairobi", alias="TIMEZONE")
     currency: str = Field(default="KES", alias="CURRENCY")
-    # Router credentials
     router_username: str = Field(default="admin", alias="ROUTER_USERNAME")
     router_password: str = Field(default="", alias="ROUTER_PASSWORD")
-
 
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
 
     @field_validator("allowed_hosts", mode="before")
     @classmethod
     def parse_allowed_hosts(cls, v):
         if isinstance(v, str):
-            return [host.strip() for host in v.split(",")]
-        return v
+            hosts = [host.strip() for host in v.split(",") if host.strip()]
+        else:
+            hosts = list(v)
+        render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+        if render_hostname and render_hostname not in hosts:
+            hosts.append(render_hostname)
+        return hosts
 
     @field_validator("log_level")
     @classmethod
@@ -100,11 +108,28 @@ class Settings(BaseSettings):
             raise ValueError("MONGODB_URL must start with mongodb:// or mongodb+srv://")
         return v
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+    @model_validator(mode="after")
+    def validate_production_secrets(self):
+        env_name = (self.app_env or "development").lower()
+        if env_name not in {"production", "prod"}:
+            return self
+
+        required = {
+            "JWT_SECRET_KEY": self.jwt_secret_key,
+            "RADIUS_SECRET": self.radius_secret,
+            "RADIUS_API_SECRET": self.radius_api_secret,
+            "ROUTER_ENCRYPTION_KEY": self.router_encryption_key,
+        }
+
+        missing = [name for name, value in required.items() if not value or len(value) < 32]
+        if missing:
+            raise ValueError(
+                "Production mode requires strong non-empty values for: "
+                + ", ".join(missing)
+                + ". Configure them in your environment variables or .env file."
+            )
+
+        return self
 
 
 settings = Settings()

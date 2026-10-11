@@ -2,11 +2,13 @@
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import database
@@ -44,8 +46,10 @@ class SecurityHeadersMiddleware:
                     (b"referrer-policy", b"strict-origin-when-cross-origin"),
                     (b"permissions-policy", b"geolocation=(), microphone=(), camera=()"),
                     (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
-                    (b"content-security-policy", b"default-src 'self'"),
                 ]
+                path = scope.get("path", "")
+                if not path.startswith(("/admin/", "/portal/", "/hotspot/")):
+                    extra_headers.append((b"content-security-policy", b"default-src 'self'"))
                 message["headers"] = headers + extra_headers
             await send(message)
 
@@ -91,9 +95,15 @@ async def lifespan(app: FastAPI):
         logger.critical(f"Startup failed: {e}")
         raise
     finally:
-        from app.core.scheduler import stop_scheduler
-        stop_scheduler()
-        await database.disconnect()
+        try:
+            from app.core.scheduler import stop_scheduler
+            stop_scheduler()
+        except Exception:
+            pass
+        try:
+            await database.disconnect()
+        except Exception:
+            pass
         logger.info("Application shutdown complete")
 
 
@@ -222,16 +232,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", tags=["Root"])
     async def root():
-        return {
-            "success": True,
-            "message": "Welcome to ISP Billing System",
-            "data": {
-                "name": settings.app_name,
-                "version": settings.app_version,
-                "environment": settings.app_env,
-                "docs": "/docs" if settings.debug else None,
-            },
-        }
+        return RedirectResponse(url="/hotspot/", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     @app.get("/health", tags=["Health"])
     async def health():
@@ -259,6 +260,14 @@ def create_app() -> FastAPI:
                 content=error_response(message="Database not ready", error_code="NOT_READY", status_code=status.HTTP_503_SERVICE_UNAVAILABLE),
             )
         return {"success": True, "message": "Application is ready", "data": {"status": "ready", "database": "connected"}}
+
+    project_root = Path(__file__).resolve().parents[1]
+    for app_path in ("admin", "portal", "hotspot"):
+        app.mount(
+            f"/{app_path}",
+            StaticFiles(directory=project_root / app_path, html=True),
+            name=app_path,
+        )
 
     return app
 

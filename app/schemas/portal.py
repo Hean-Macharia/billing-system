@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -27,3 +27,16 @@ class HotspotPurchaseRequest(BaseModel):
     """Walk-up self-service HotSpot voucher purchase - no customer account needed."""
     plan_id: str
     phone_number: str = Field(..., pattern=r"^254[0-9]{9}$", description="2547XXXXXXXX format")
+    device_type: Literal["this_device", "tv", "other"]
+    device_mac: str = Field(..., pattern=r"(?i)^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$")
+
+
+class HotspotTrialRequest(BaseModel):
+    """A device-bound request for a single short HotSpot trial."""
+    client_mac: str = Field(..., pattern=r"(?i)^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$")
+
+
+class HotspotDeviceLookupRequest(BaseModel):
+    """Find a connected client's MAC from a private LAN IP or confirm a MAC."""
+    ip_address: Optional[str] = None
+    mac_address: Optional[str] = Field(default=None, pattern=r"(?i)^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$")
