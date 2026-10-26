@@ -2,8 +2,10 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.config import settings
 from app.core.dependencies import get_db, require_permission
 from app.core.logging import get_logger
 from app.models.user import Permission, UserInDB
@@ -115,7 +117,41 @@ async def delete_router(
     return success_response(message="Router deleted")
 
 
-# ── Connectivity & Health ──
+# ── Relay and Connectivity Health ──
+
+@router.get("/relay/health", response_model=dict)
+async def relay_health(
+    request: Request,
+    current_user: UserInDB = Depends(require_permission(Permission.ROUTERS_READ)),
+):
+    """Return only a safe health summary for the configured RouterOS relay."""
+    mode = settings.router_connection_mode
+    if mode == "direct":
+        return success_response(
+            message="Router connectivity is direct",
+            data={"mode": "direct", "router_host": settings.router_host, "router_port": settings.router_port},
+        )
+
+    relay_url = settings.router_relay_url
+    if not relay_url:
+        return success_response(
+            message="Relay not configured",
+            data={"mode": "vps_relay", "status": "not_configured"},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    return success_response(
+        message="Relay health checked",
+        data={
+            "mode": "vps_relay",
+            "status": "configured",
+            "relay_url": relay_url,
+            "router_host": settings.router_host,
+            "router_port": settings.router_port,
+            "router_username": settings.router_username,
+        },
+    )
+
 
 @router.post("/{router_id}/test", response_model=dict)
 async def test_router_connectivity(

@@ -70,8 +70,15 @@ class Settings(BaseSettings):
     router_encryption_key: str = Field(default="", alias="ROUTER_ENCRYPTION_KEY")
     timezone: str = Field(default="Africa/Nairobi", alias="TIMEZONE")
     currency: str = Field(default="KES", alias="CURRENCY")
-    router_username: str = Field(default="admin", alias="ROUTER_USERNAME")
+    router_name: str = Field(default="nyaururu", alias="ROUTER_NAME")
+    router_connection_mode: str = Field(default="direct", alias="ROUTER_CONNECTION_MODE")
+    router_relay_url: Optional[str] = Field(default=None, alias="ROUTER_RELAY_URL")
+    router_relay_token: Optional[str] = Field(default=None, alias="ROUTER_RELAY_TOKEN")
+    router_host: str = Field(default="10.30.0.10", alias="ROUTER_HOST")
+    router_port: int = Field(default=8728, alias="ROUTER_PORT")
+    router_username: str = Field(default="isp-billing-api", alias="ROUTER_USERNAME")
     router_password: str = Field(default="", alias="ROUTER_PASSWORD")
+    router_connection_timeout: int = Field(default=10, alias="ROUTER_CONNECTION_TIMEOUT")
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -101,6 +108,27 @@ class Settings(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {allowed}")
         return v_upper
 
+    @field_validator("router_connection_mode")
+    @classmethod
+    def validate_router_connection_mode(cls, v):
+        if v is None:
+            return "direct"
+        mode = str(v).strip().lower()
+        allowed = {"direct", "vps_relay"}
+        if mode not in allowed:
+            raise ValueError("ROUTER_CONNECTION_MODE must be 'direct' or 'vps_relay'")
+        return mode
+
+    @field_validator("router_relay_url")
+    @classmethod
+    def validate_router_relay_url(cls, v):
+        if not v:
+            return v
+        value = str(v).strip()
+        if not value.startswith("https://"):
+            raise ValueError("ROUTER_RELAY_URL must use HTTPS when relay mode is enabled")
+        return value.rstrip("/")
+
     @field_validator("mongodb_url")
     @classmethod
     def validate_mongodb_url(cls, v):
@@ -128,6 +156,12 @@ class Settings(BaseSettings):
                 + ", ".join(missing)
                 + ". Configure them in your environment variables or .env file."
             )
+
+        if self.router_connection_mode == "vps_relay":
+            if not self.router_relay_url or not self.router_relay_token:
+                raise ValueError(
+                    "vps_relay mode requires ROUTER_RELAY_URL and ROUTER_RELAY_TOKEN environment variables."
+                )
 
         return self
 

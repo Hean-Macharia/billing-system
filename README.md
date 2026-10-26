@@ -96,6 +96,21 @@ Production deployments must set strong values for:
 
 These are enforced in `app/core/config.py` when `APP_ENV=production`.
 
+## Render to VPS relay architecture
+
+The application supports a secure `vps_relay` router connection mode for Render deployments when direct access to the private MikroTik VPN address is not possible.
+
+Use these variables in Render:
+
+- `ROUTER_CONNECTION_MODE=vps_relay`
+- `ROUTER_RELAY_URL=https://<vps-public-host>:<https-port>`
+- `ROUTER_RELAY_TOKEN=<shared-token>`
+- `ROUTER_HOST=10.30.0.10`
+- `ROUTER_PORT=8728`
+- `ROUTER_USERNAME=isp-billing-api`
+
+The relay should live on the Oracle VPS, validate the token, restrict allowed RouterOS operations, and never expose the router's raw TCP 8728/8729 port to the public Internet. Direct router access remains the fallback when the relay is not configured.
+
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md)

@@ -26,3 +26,17 @@ services:
         sync: false
       - key: ROUTER_ENCRYPTION_KEY
         sync: false
+      - key: ROUTER_CONNECTION_MODE
+        value: vps_relay
+      - key: ROUTER_RELAY_URL
+        sync: false
+      - key: ROUTER_RELAY_TOKEN
+        sync: false
+      - key: ROUTER_HOST
+        value: 10.30.0.10
+      - key: ROUTER_PORT
+        value: "8728"
+      - key: ROUTER_USERNAME
+        value: isp-billing-api
+      - key: ROUTER_CONNECTION_TIMEOUT
+        value: "10"

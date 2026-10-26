@@ -15,7 +15,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.crypto import decrypt_value, encrypt_value
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.core.config import settings
 from app.integrations.mikrotik.legacy_client import AsyncMikroTikLegacyClient, MikroTikLegacyError
+from app.integrations.mikrotik.relay_client import RouterRelayClient, RouterRelayError
 from app.integrations.mikrotik.rest_client import AsyncMikroTikRestClient, MikroTikRestError
 from app.integrations.mikrotik.parsers import (
     normalize_active_hotspot,
@@ -208,6 +210,13 @@ class RouterService:
             ssl_verify=bool(router.get("ssl_verify", False)),
         )
 
+    def _relay_client(self) -> RouterRelayClient:
+        return RouterRelayClient(
+            base_url=settings.router_relay_url,
+            token=settings.router_relay_token,
+            timeout=settings.router_connection_timeout,
+        )
+
     async def _resolve_client(self, router: dict) -> Tuple[Any, str]:
         """
         Return the correct MikroTik client for this router.
@@ -217,7 +226,40 @@ class RouterService:
         router. This keeps RouterOS 6 routers working when the preferred REST
         client is down and matches the compatibility contract expected by the
         test suite and live deployment.
+
+        When the app is configured to use the VPS relay, the relay is preferred as
+        an authenticated, trusted hop that reaches the router over the private
+        VPN. Direct router connections remain the fallback when the relay is not
+        configured or unavailable.
         """
+        if settings.router_connection_mode == "vps_relay":
+            relay_client = self._relay_client()
+            try:
+                reachable = await relay_client.test_connection()
+            except (RouterRelayError, Exception):
+                reachable = False
+            if reachable:
+                return relay_client, "relay"
+
+            if settings.router_host and settings.router_password:
+                try:
+                    direct_client = self._legacy_client({
+                        **router,
+                        "ip_address": settings.router_host,
+                        "port": settings.router_port,
+                        "username": settings.router_username,
+                        "password": encrypt_value(settings.router_password),
+                        "use_ssl": False,
+                        "ssl_verify": False,
+                    })
+                    direct_reachable = await direct_client.test_connection()
+                    if direct_reachable:
+                        return direct_client, RouterApiType.LEGACY.value
+                except Exception:
+                    pass
+
+            return relay_client, "relay"
+
         api_type = router.get("api_type")
         if hasattr(api_type, "value"):
             api_type = api_type.value
@@ -247,6 +289,13 @@ class RouterService:
 
     async def _close_client(self, client: Any, api_type: str) -> None:
         """Close a client regardless of type."""
+        if api_type == "relay":
+            if hasattr(client, "close"):
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+            return
         if api_type == RouterApiType.LEGACY.value:
             if hasattr(client, "disconnect"):
                 try:
