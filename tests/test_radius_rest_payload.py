@@ -58,6 +58,50 @@ def test_radius_accounting_request_flattens_freeradius_json_attributes():
     assert request.Acct_Session_Id == "session-123"
 
 
+@pytest.mark.parametrize(
+    ("status_value", "expected_status"),
+    [
+        (1, "Start"),
+        ("1", "Start"),
+        (2, "Stop"),
+        ("2", "Stop"),
+        (3, "Interim-Update"),
+        ("3", "Interim-Update"),
+        ("Start", "Start"),
+        ("Interim-Update", "Interim-Update"),
+        ("Stop", "Stop"),
+    ],
+)
+def test_accounting_request_accepts_integer_enum_status_and_string_labels(status_value, expected_status):
+    request = RadiusAccountingRequest.model_validate({
+        "request:Acct-Status-Type": {"type": "integer", "value": [status_value]},
+    })
+
+    assert request.Acct_Status_Type == expected_status
+
+
+@pytest.mark.parametrize("numeric_value", [123, "123"])
+def test_accounting_numeric_attributes_accept_integer_and_numeric_string(numeric_value):
+    request = RadiusAccountingRequest.model_validate({
+        "Acct-Status-Type": "Interim-Update",
+        "NAS-Port": numeric_value,
+        "Acct-Session-Time": numeric_value,
+        "Acct-Input-Octets": numeric_value,
+        "Acct-Output-Octets": numeric_value,
+        "Acct-Input-Gigawords": numeric_value,
+        "Acct-Output-Gigawords": numeric_value,
+        "Event-Timestamp": numeric_value,
+    })
+
+    assert request.NAS_Port == "123"
+    assert request.Acct_Session_Time == 123
+    assert request.Acct_Input_Octets == 123
+    assert request.Acct_Output_Octets == 123
+    assert request.Acct_Input_Gigawords == 123
+    assert request.Acct_Output_Gigawords == 123
+    assert request.Event_Timestamp == 123
+
+
 def test_radius_integer_enum_attributes_are_compatible_with_string_fields():
     request = RadiusAccountingRequest.model_validate({
         "Acct-Status-Type": "Start",

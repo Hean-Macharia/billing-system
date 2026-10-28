@@ -23,7 +23,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.logging import get_logger, setup_logging
-from app.schemas.radius_auth import RadiusAuthRequest
+from app.schemas.radius_auth import RadiusAccountingRequest, RadiusAuthRequest
 from app.utils.helpers import error_response
 
 logger = get_logger(__name__)
@@ -31,6 +31,11 @@ _RADIUS_AUTH_PATH = "/api/v1/radius/auth"
 _RADIUS_AUTH_FIELDS = {
     field.alias or name
     for name, field in RadiusAuthRequest.model_fields.items()
+}
+_RADIUS_ACCOUNTING_PATH = "/api/v1/radius/accounting"
+_RADIUS_ACCOUNTING_FIELDS = {
+    field.alias or name
+    for name, field in RadiusAccountingRequest.model_fields.items()
 }
 
 
@@ -196,7 +201,12 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
-        if request.url.path != _RADIUS_AUTH_PATH:
+        safe_fields_by_path = {
+            _RADIUS_AUTH_PATH: _RADIUS_AUTH_FIELDS,
+            _RADIUS_ACCOUNTING_PATH: _RADIUS_ACCOUNTING_FIELDS,
+        }
+        safe_fields = safe_fields_by_path.get(request.url.path)
+        if safe_fields is None:
             return await fastapi_request_validation_exception_handler(request, exc)
 
         safe_errors = []
@@ -206,7 +216,7 @@ def create_app() -> FastAPI:
                 if isinstance(part, int)
                 or (
                     isinstance(part, str)
-                    and part in {"body", "query", "path", "header", "cookie"} | _RADIUS_AUTH_FIELDS
+                    and part in {"body", "query", "path", "header", "cookie"} | safe_fields
                 )
                 else "[redacted]"
                 for part in error.get("loc", ())
@@ -219,7 +229,7 @@ def create_app() -> FastAPI:
 
         logger.warning(
             "Request validation failed: path=%s errors=%s",
-            _RADIUS_AUTH_PATH,
+            request.url.path,
             safe_errors,
         )
         return JSONResponse(

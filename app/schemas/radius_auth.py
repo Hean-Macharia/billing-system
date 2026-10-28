@@ -16,6 +16,14 @@ _INTEGER_ENUM_ATTRIBUTES_STORED_AS_STRINGS = {
     "Acct-Terminate-Cause",
 }
 
+_ACCT_STATUS_TYPE_CODES = {
+    1: "Start",
+    2: "Stop",
+    3: "Interim-Update",
+    7: "Accounting-On",
+    8: "Accounting-Off",
+}
+
 
 class RadiusRequestModel(BaseModel):
     """Accept flat test payloads and FreeRADIUS rlm_rest JSON attributes."""
@@ -35,7 +43,13 @@ class RadiusRequestModel(BaseModel):
                 attribute = attribute["value"]
             if isinstance(attribute, list):
                 attribute = attribute[0] if attribute else None
-            if (
+            if attribute_name == "Acct-Status-Type" and (
+                type(attribute) is int
+                or isinstance(attribute, str) and attribute.isdecimal()
+            ):
+                status_code = int(attribute)
+                attribute = _ACCT_STATUS_TYPE_CODES.get(status_code, str(status_code))
+            elif (
                 attribute_name in _INTEGER_ENUM_ATTRIBUTES_STORED_AS_STRINGS
                 and type(attribute) is int
             ):
