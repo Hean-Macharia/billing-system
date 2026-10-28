@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request, status
+from fastapi.exception_handlers import request_validation_exception_handler as fastapi_request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -21,9 +23,15 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.logging import get_logger, setup_logging
+from app.schemas.radius_auth import RadiusAuthRequest
 from app.utils.helpers import error_response
 
 logger = get_logger(__name__)
+_RADIUS_AUTH_PATH = "/api/v1/radius/auth"
+_RADIUS_AUTH_FIELDS = {
+    field.alias or name
+    for name, field in RadiusAuthRequest.model_fields.items()
+}
 
 
 class SecurityHeadersMiddleware:
@@ -184,6 +192,39 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=error_response(message=exc.message, error_code="VALIDATION_ERROR", status_code=status.HTTP_422_UNPROCESSABLE_ENTITY),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+        if request.url.path != _RADIUS_AUTH_PATH:
+            return await fastapi_request_validation_exception_handler(request, exc)
+
+        safe_errors = []
+        for error in exc.errors():
+            safe_location = [
+                part
+                if isinstance(part, int)
+                or (
+                    isinstance(part, str)
+                    and part in {"body", "query", "path", "header", "cookie"} | _RADIUS_AUTH_FIELDS
+                )
+                else "[redacted]"
+                for part in error.get("loc", ())
+            ]
+            error_type = error.get("type")
+            safe_errors.append({
+                "loc": safe_location,
+                "type": error_type if isinstance(error_type, str) else "validation_error",
+            })
+
+        logger.warning(
+            "Request validation failed: path=%s errors=%s",
+            _RADIUS_AUTH_PATH,
+            safe_errors,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": safe_errors},
         )
 
     @app.exception_handler(Exception)
