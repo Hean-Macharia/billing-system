@@ -2,9 +2,10 @@
 
 These schemas define the JSON payloads exchanged between FreeRADIUS and FastAPI.
 """
+from datetime import datetime, timezone
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 _INTEGER_ENUM_ATTRIBUTES_STORED_AS_STRINGS = {
@@ -132,6 +133,42 @@ class RadiusAccountingRequest(RadiusRequestModel):
     Framed_IP_Address: Optional[str] = Field(alias="Framed-IP-Address", default=None)
     Framed_Protocol: Optional[str] = Field(alias="Framed-Protocol", default=None)
     Service_Type: Optional[str] = Field(alias="Service-Type", default=None)
-    Event_Timestamp: Optional[int] = Field(alias="Event-Timestamp", default=None)
+    Event_Timestamp: Optional[datetime] = Field(alias="Event-Timestamp", default=None)
     Class: Optional[str] = Field(alias="Class", default=None)
     Acct_Delay_Time: Optional[int] = Field(alias="Acct-Delay-Time", default=0)
+
+    @field_validator("Event_Timestamp", mode="before")
+    @classmethod
+    def normalize_event_timestamp(cls, value: object) -> object:
+        if value is None:
+            return None
+
+        if isinstance(value, bool):
+            raise ValueError("Event-Timestamp must be an ISO-8601 date or Unix timestamp")
+
+        if isinstance(value, int):
+            try:
+                return datetime.fromtimestamp(value, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError) as exc:
+                raise ValueError("Event-Timestamp Unix value is out of range") from exc
+
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized.lstrip("+-").isdigit():
+                try:
+                    return datetime.fromtimestamp(int(normalized), tz=timezone.utc)
+                except (OverflowError, OSError, ValueError) as exc:
+                    raise ValueError("Event-Timestamp Unix value is out of range") from exc
+
+            if normalized.endswith(("Z", "z")):
+                normalized = f"{normalized[:-1]}+00:00"
+            try:
+                parsed = datetime.fromisoformat(normalized)
+            except ValueError:
+                return value
+
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        return value

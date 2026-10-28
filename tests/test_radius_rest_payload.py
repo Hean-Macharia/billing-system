@@ -99,7 +99,7 @@ def test_accounting_numeric_attributes_accept_integer_and_numeric_string(numeric
     assert request.Acct_Output_Octets == 123
     assert request.Acct_Input_Gigawords == 123
     assert request.Acct_Output_Gigawords == 123
-    assert request.Event_Timestamp == 123
+    assert request.Event_Timestamp == datetime.fromtimestamp(123, timezone.utc)
 
 
 def test_radius_integer_enum_attributes_are_compatible_with_string_fields():
@@ -118,7 +118,41 @@ def test_radius_integer_enum_attributes_are_compatible_with_string_fields():
     assert request.Framed_Protocol == "1"
     assert request.Acct_Authentic == "1"
     assert request.Acct_Terminate_Cause == "1"
-    assert request.Event_Timestamp == 1_798_000_000
+    assert request.Event_Timestamp == datetime.fromtimestamp(1_798_000_000, timezone.utc)
+
+
+def test_radius_accounting_accepts_freeradius_iso8601_event_timestamp():
+    request = RadiusAccountingRequest.model_validate({
+        "Acct-Status-Type": "Start",
+        "request:Event-Timestamp": {
+            "type": "date",
+            "value": ["2026-10-28T21:04:50Z"],
+        },
+    })
+
+    assert request.Event_Timestamp == datetime(2026, 10, 28, 21, 4, 50, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("timestamp", [1_798_000_000, "1798000000"])
+def test_radius_accounting_preserves_unix_event_timestamp_compatibility(timestamp):
+    request = RadiusAccountingRequest.model_validate({
+        "Acct-Status-Type": "Start",
+        "Event-Timestamp": timestamp,
+    })
+
+    assert request.Event_Timestamp == datetime.fromtimestamp(1_798_000_000, timezone.utc)
+
+
+def test_radius_accounting_rejects_invalid_event_timestamp():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as error:
+        RadiusAccountingRequest.model_validate({
+            "Acct-Status-Type": "Start",
+            "Event-Timestamp": "not-a-timestamp",
+        })
+
+    assert error.value.errors()[0]["loc"] == ("Event-Timestamp",)
 
 
 def test_radius_internal_api_requires_its_separate_secret(monkeypatch):
