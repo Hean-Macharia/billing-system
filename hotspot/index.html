@@ -1490,6 +1490,56 @@
       document.getElementById('retry-btn').onclick = () => document.querySelector('.sheet-overlay')?.remove();
     }
 
+    // Verify an existing voucher and offer MikroTik login.
+    document.getElementById('voucher-login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      const input = document.getElementById('voucher-login-code');
+      const button = document.getElementById('voucher-login-submit');
+      const result = document.getElementById('voucher-login-result');
+      const code = input.value.trim();
+
+      if (!code) {
+        result.textContent = 'Please enter your WiFi voucher code.';
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = 'Verifying...';
+      result.textContent = 'Checking your voucher...';
+
+      try {
+        const response = await api(
+          `/api/v1/vouchers/public/check/${encodeURIComponent(code)}`
+        );
+
+        const voucher = response.data;
+
+        if (!voucher || voucher.valid !== true) {
+          result.textContent =
+            voucher?.reason || 'This voucher is invalid, inactive, or expired.';
+          return;
+        }
+
+        result.textContent = '';
+
+        const connect = document.createElement('div');
+        connect.innerHTML = voucherLoginMarkup(code);
+        result.appendChild(connect);
+
+        if (!getCaptiveLoginUrl()) {
+          result.textContent =
+            'Voucher verified. Open the MikroTik WiFi login page and enter your voucher code to connect.';
+        }
+      } catch (error) {
+        result.textContent =
+          error.message || 'Unable to verify the voucher. Please try again.';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Verify voucher';
+      }
+    });
+
     loadPlans();
     document.getElementById('check-balance').addEventListener('click', openBalanceCheck);
     document.getElementById('free-trial').addEventListener('click', openFreeTrial);
