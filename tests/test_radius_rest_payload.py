@@ -22,6 +22,29 @@ def test_radius_auth_request_flattens_freeradius_json_attributes():
     assert request.Calling_Station_Id == "aa-bb-cc-dd-ee-ff"
 
 
+@pytest.mark.parametrize(
+    ("request_model", "payload", "expected_port"),
+    [
+        (RadiusAuthRequest, {"NAS-Port": 17}, "17"),
+        (RadiusAuthRequest, {"NAS-Port": "17"}, "17"),
+        (
+            RadiusAccountingRequest,
+            {"Acct-Status-Type": "Start", "request:NAS-Port": {"type": "integer", "value": [17]}},
+            "17",
+        ),
+        (
+            RadiusAccountingRequest,
+            {"Acct-Status-Type": "Start", "NAS-Port": "17"},
+            "17",
+        ),
+    ],
+)
+def test_radius_requests_accept_integer_and_string_nas_port(request_model, payload, expected_port):
+    request = request_model.model_validate(payload)
+
+    assert request.NAS_Port == expected_port
+
+
 def test_radius_accounting_request_flattens_freeradius_json_attributes():
     request = RadiusAccountingRequest.model_validate({
         "request:Acct-Status-Type": {"type": "string", "value": ["Interim-Update"]},
@@ -32,6 +55,25 @@ def test_radius_accounting_request_flattens_freeradius_json_attributes():
     assert request.Acct_Status_Type == "Interim-Update"
     assert request.Acct_Session_Time == 120
     assert request.Acct_Session_Id == "session-123"
+
+
+def test_radius_integer_enum_attributes_are_compatible_with_string_fields():
+    request = RadiusAccountingRequest.model_validate({
+        "Acct-Status-Type": "Start",
+        "NAS-Port-Type": 19,
+        "Service-Type": 2,
+        "Framed-Protocol": 1,
+        "Acct-Authentic": 1,
+        "Acct-Terminate-Cause": 1,
+        "Event-Timestamp": 1_798_000_000,
+    })
+
+    assert request.NAS_Port_Type == "19"
+    assert request.Service_Type == "2"
+    assert request.Framed_Protocol == "1"
+    assert request.Acct_Authentic == "1"
+    assert request.Acct_Terminate_Cause == "1"
+    assert request.Event_Timestamp == 1_798_000_000
 
 
 def test_radius_internal_api_requires_its_separate_secret(monkeypatch):

@@ -7,6 +7,16 @@ from typing import Optional
 from pydantic import BaseModel, Field, model_validator
 
 
+_INTEGER_ENUM_ATTRIBUTES_STORED_AS_STRINGS = {
+    "NAS-Port",
+    "NAS-Port-Type",
+    "Service-Type",
+    "Framed-Protocol",
+    "Acct-Authentic",
+    "Acct-Terminate-Cause",
+}
+
+
 class RadiusRequestModel(BaseModel):
     """Accept flat test payloads and FreeRADIUS rlm_rest JSON attributes."""
 
@@ -25,6 +35,11 @@ class RadiusRequestModel(BaseModel):
                 attribute = attribute["value"]
             if isinstance(attribute, list):
                 attribute = attribute[0] if attribute else None
+            if (
+                attribute_name in _INTEGER_ENUM_ATTRIBUTES_STORED_AS_STRINGS
+                and type(attribute) is int
+            ):
+                attribute = str(attribute)
             flattened[attribute_name] = attribute
         return flattened
 
@@ -103,6 +118,6 @@ class RadiusAccountingRequest(RadiusRequestModel):
     Framed_IP_Address: Optional[str] = Field(alias="Framed-IP-Address", default=None)
     Framed_Protocol: Optional[str] = Field(alias="Framed-Protocol", default=None)
     Service_Type: Optional[str] = Field(alias="Service-Type", default=None)
-    Event_Timestamp: Optional[str] = Field(alias="Event-Timestamp", default=None)
+    Event_Timestamp: Optional[int] = Field(alias="Event-Timestamp", default=None)
     Class: Optional[str] = Field(alias="Class", default=None)
     Acct_Delay_Time: Optional[int] = Field(alias="Acct-Delay-Time", default=0)
