@@ -133,6 +133,19 @@ def test_radius_accounting_accepts_freeradius_iso8601_event_timestamp():
     assert request.Event_Timestamp == datetime(2026, 10, 28, 21, 4, 50, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize("timezone_name", ["UTC", "GMT"])
+def test_radius_accounting_accepts_freeradius_date_event_timestamp(timezone_name):
+    request = RadiusAccountingRequest.model_validate({
+        "Acct-Status-Type": "Start",
+        "request:Event-Timestamp": {
+            "type": "date",
+            "value": [f"Oct  8 2026 21:04:50 {timezone_name}"],
+        },
+    })
+
+    assert request.Event_Timestamp == datetime(2026, 10, 8, 21, 4, 50, tzinfo=timezone.utc)
+
+
 @pytest.mark.parametrize("timestamp", [1_798_000_000, "1798000000"])
 def test_radius_accounting_preserves_unix_event_timestamp_compatibility(timestamp):
     request = RadiusAccountingRequest.model_validate({

@@ -144,7 +144,9 @@ class RadiusAccountingRequest(RadiusRequestModel):
             return None
 
         if isinstance(value, bool):
-            raise ValueError("Event-Timestamp must be an ISO-8601 date or Unix timestamp")
+            raise ValueError(
+                "Event-Timestamp must be a FreeRADIUS date, ISO-8601 date, or Unix timestamp"
+            )
 
         if isinstance(value, int):
             try:
@@ -159,6 +161,16 @@ class RadiusAccountingRequest(RadiusRequestModel):
                     return datetime.fromtimestamp(int(normalized), tz=timezone.utc)
                 except (OverflowError, OSError, ValueError) as exc:
                     raise ValueError("Event-Timestamp Unix value is out of range") from exc
+
+            for timezone_name in ("UTC", "GMT"):
+                try:
+                    parsed = datetime.strptime(
+                        normalized,
+                        f"%b %d %Y %H:%M:%S {timezone_name}",
+                    )
+                except ValueError:
+                    continue
+                return parsed.replace(tzinfo=timezone.utc)
 
             if normalized.endswith(("Z", "z")):
                 normalized = f"{normalized[:-1]}+00:00"
