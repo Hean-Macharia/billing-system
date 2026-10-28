@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -131,6 +132,103 @@ async def test_used_voucher_allows_same_device_retry_but_rejects_another_device(
     stored = await db.vouchers.find_one({"_id": result.inserted_id})
     assert stored["status"] == "used"
     assert stored["calling_station_id"] == station
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_voucher_lookup_diagnostics_distinguish_missing_code_without_logging_it(caplog):
+    client = AsyncMongoMockClient(tz_aware=True)
+    service = RadiusAuthService(client["radius_missing_voucher_test"])
+    code = "SensitiveVoucherCode"
+    caplog.set_level(logging.WARNING, logger="app.services.radius_auth_service")
+
+    assert await service._check_voucher(code, "AA:BB:CC:DD:EE:FF") is None
+
+    assert "reason=no_exact_match" in caplog.text
+    assert "lowercase_characters=True" in caplog.text
+    assert code not in caplog.text
+    assert "AA:BB:CC:DD:EE:FF" not in caplog.text
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_voucher_lookup_diagnostics_report_ineligible_status_without_logging_code(caplog):
+    client = AsyncMongoMockClient(tz_aware=True)
+    db = client["radius_ineligible_voucher_test"]
+    code = "SensitiveGeneratedVoucher"
+    await db.vouchers.insert_one({"voucher_code": code, "status": "generated"})
+    service = RadiusAuthService(db)
+    caplog.set_level(logging.WARNING, logger="app.services.radius_auth_service")
+
+    assert await service._check_voucher(code, "") is None
+
+    assert "reason=status_not_eligible status=generated" in caplog.text
+    assert code not in caplog.text
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_voucher_lookup_diagnostics_detect_case_and_whitespace_mismatch(caplog):
+    client = AsyncMongoMockClient(tz_aware=True)
+    db = client["radius_voucher_format_test"]
+    stored_code = "SENSITIVEVOUCHERCODE"
+    submitted_code = f" {stored_code.lower()} "
+    await db.vouchers.insert_one({"voucher_code": stored_code, "status": "active"})
+    service = RadiusAuthService(db)
+    caplog.set_level(logging.WARNING, logger="app.services.radius_auth_service")
+
+    assert await service._check_voucher(submitted_code, "") is None
+
+    assert "reason=username_format_mismatch" in caplog.text
+    assert "surrounding_whitespace=True" in caplog.text
+    assert "lowercase_characters=True" in caplog.text
+    assert stored_code not in caplog.text
+    assert submitted_code not in caplog.text
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_voucher_lookup_diagnostics_distinguish_device_binding_failure(caplog):
+    client = AsyncMongoMockClient(tz_aware=True)
+    db = client["radius_voucher_binding_test"]
+    code = "SensitiveBoundVoucher"
+    station = "AA:BB:CC:DD:EE:FF"
+    await db.vouchers.insert_one({
+        "voucher_code": code,
+        "status": "active",
+        "bound_mac": station,
+    })
+    service = RadiusAuthService(db)
+    caplog.set_level(logging.WARNING, logger="app.services.radius_auth_service")
+
+    assert await service._check_voucher(code, "11:22:33:44:55:66") is None
+
+    assert "stage=device_binding reason=mac_mismatch" in caplog.text
+    assert code not in caplog.text
+    assert station not in caplog.text
+    assert "11:22:33:44:55:66" not in caplog.text
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_voucher_lookup_diagnostics_distinguish_expiry_failure(caplog):
+    client = AsyncMongoMockClient(tz_aware=True)
+    db = client["radius_voucher_expiry_test"]
+    code = "SensitiveExpiredVoucher"
+    await db.vouchers.insert_one({
+        "voucher_code": code,
+        "status": "active",
+        "expiry_date": datetime.now(timezone.utc) - timedelta(minutes=1),
+    })
+    service = RadiusAuthService(db)
+    caplog.set_level(logging.WARNING, logger="app.services.radius_auth_service")
+
+    assert await service._check_voucher(code, "") is None
+
+    assert "stage=expiry reason=expired" in caplog.text
+    assert code not in caplog.text
+    stored = await db.vouchers.find_one({"voucher_code": code})
+    assert stored["status"] == "expired"
     client.close()
 
 

@@ -62,7 +62,7 @@ class RadiusAuthService:
             voucher = await self._check_voucher(username, calling_station)
             if voucher:
                 return await self._authorize_voucher(voucher, nas_ip, calling_station)
-            logger.warning("RADIUS auth rejected: credential not found")
+            logger.warning("RADIUS auth rejected: no eligible user or voucher")
             return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid credentials")
 
         user = RadiusUser(**{**user_doc, "_id": str(user_doc["_id"])})
@@ -152,6 +152,52 @@ class RadiusAuthService:
             "status": {"$in": ["active", "used"]},
         })
         if not voucher:
+            exact_match = await self.voucher_collection.find_one(
+                {"voucher_code": code},
+                {"status": 1, "_id": 0},
+            )
+            if exact_match:
+                status_value = exact_match.get("status")
+                safe_status = (
+                    status_value
+                    if status_value in {"generated", "active", "used", "expired", "disabled"}
+                    else "unknown"
+                )
+                logger.warning(
+                    "RADIUS voucher rejected: stage=lookup reason=status_not_eligible status=%s",
+                    safe_status,
+                )
+                return None
+
+            normalized_code = code.strip().upper()
+            if normalized_code != code:
+                normalized_match = await self.voucher_collection.find_one(
+                    {"voucher_code": normalized_code},
+                    {"status": 1, "_id": 0},
+                )
+                if normalized_match:
+                    status_value = normalized_match.get("status")
+                    safe_status = (
+                        status_value
+                        if status_value in {"generated", "active", "used", "expired", "disabled"}
+                        else "unknown"
+                    )
+                    logger.warning(
+                        "RADIUS voucher rejected: stage=lookup reason=username_format_mismatch "
+                        "status=%s surrounding_whitespace=%s lowercase_characters=%s",
+                        safe_status,
+                        code != code.strip(),
+                        code != code.upper(),
+                    )
+                    return None
+
+            logger.warning(
+                "RADIUS voucher rejected: stage=lookup reason=no_exact_match "
+                "username_length=%d surrounding_whitespace=%s lowercase_characters=%s",
+                len(code),
+                code != code.strip(),
+                code != code.upper(),
+            )
             return None
 
         normalized_station = (calling_station or "").replace("-", ":").upper()
@@ -161,7 +207,7 @@ class RadiusAuthService:
         if required_mac:
             normalized_required_mac = required_mac.replace("-", ":").upper()
             if normalized_station != normalized_required_mac:
-                logger.warning("RADIUS device-bound voucher rejected: client MAC does not match")
+                logger.warning("RADIUS voucher rejected: stage=device_binding reason=mac_mismatch")
                 return None
 
         # Check expiry
@@ -171,6 +217,7 @@ class RadiusAuthService:
                 {"_id": voucher["_id"]},
                 {"$set": {"status": "expired", "updated_at": datetime.now(timezone.utc)}},
             )
+            logger.warning("RADIUS voucher rejected: stage=expiry reason=expired")
             return None
 
         return voucher
