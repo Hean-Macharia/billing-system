@@ -18,6 +18,7 @@ class PaymentCreate(BaseModel):
     notes: Optional[str] = None
     transaction_id: Optional[str] = None
     mpesa_phone_number: Optional[str] = None
+    mpesa_receipt_number: Optional[str] = None
     bank_reference: Optional[str] = None
     bank_name: Optional[str] = None
     received_by: Optional[str] = None

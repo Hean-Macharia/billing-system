@@ -147,9 +147,13 @@ class PaymentService:
         if payment.subscription_id:
             try:
                 await self.db.subscriptions.update_one(
-                    {"_id": ObjectId(payment.subscription_id)},
+                    {
+                        "_id": ObjectId(payment.subscription_id),
+                        "applied_payment_ids": {"$ne": payment.id},
+                    },
                     {
                         "$inc": {"total_paid_kes": payment.amount_kes},
+                        "$addToSet": {"applied_payment_ids": payment.id},
                         "$set": {"updated_at": now},
                     },
                 )

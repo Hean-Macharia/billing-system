@@ -1,8 +1,8 @@
 /*
   Customer portal design system
   ------------------------------
-  Same brand as the ops console (Nyaururu Net: Public Sans + IBM Plex
-  Mono, signal-teal accent) but flipped for a different audience: a
+  Same brand as the ops console (Public Sans + IBM Plex
+  Mono, crimson accent) but flipped for a different audience: a
   customer checking their bill on their phone at the kitchen table, not
   an operator staring at screens all day. Light, calm, mobile-first, one
   clear action per screen (pay, view usage, message support) instead of
@@ -12,9 +12,9 @@
 
 :root {
   --ink: #10192F;
-  --signal: #2DD4BF;
-  --signal-ink: #063B36;
-  --signal-soft: #E1FBF7;
+  --signal: #B91C1C;
+  --signal-ink: #FFFFFF;
+  --signal-soft: #FEE2E2;
   --amber: #F2A93B;
   --good: #34C77A;
   --bad: #F1616B;
@@ -38,19 +38,19 @@ a { color: inherit; text-decoration: none; }
 
 /* Shell */
 .topbar {
-  background: var(--ink); color: #fff; padding: 0 18px;
+  background: #fff; color: var(--text); padding: 0 18px;
   display: flex; align-items: center; justify-content: space-between; height: 58px;
-  position: sticky; top: 0; z-index: 30;
+  position: sticky; top: 0; z-index: 30; border-bottom: 1px solid var(--line);
 }
 .topbar .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 15px; }
 .topbar .mark {
   width: 30px; height: 30px; border-radius: 8px;
-  background: linear-gradient(135deg, var(--signal), #1a8f82);
-  display: flex; align-items: center; justify-content: center; color: var(--signal-ink);
+  background: linear-gradient(135deg, #EF4444, #991B1B);
+  display: flex; align-items: center; justify-content: center; color: #fff;
 }
 .topbar .mark svg { width: 16px; height: 16px; }
 .topbar-right { display: flex; align-items: center; gap: 14px; }
-.topbar-name { font-size: 12.5px; color: #C6D0E8; }
+.topbar-name { font-size: 12.5px; color: var(--muted); }
 
 .tabbar {
   display: flex; gap: 2px; background: #fff; border-bottom: 1px solid var(--line);
@@ -66,7 +66,8 @@ a { color: inherit; text-decoration: none; }
 .shell-body { max-width: 720px; margin: 0 auto; padding: 20px 16px 60px; }
 
 /* Cards */
-.card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; }
+.card { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; animation: card-enter 0.28s ease-out both; }
+@keyframes card-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 .card-flush { padding: 0; overflow: hidden; }
 .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 10px; flex-wrap: wrap; }
 .card-head h2 { font-size: 15px; }
@@ -132,7 +133,7 @@ textarea { resize: vertical; min-height: 80px; }
 .badge-amber { background: #FDF1DE; color: #A8650D; }
 .badge-bad { background: #FCEAEC; color: #B4293A; }
 .badge-muted { background: #EEF1F8; color: #5A6B8C; }
-.badge-signal { background: var(--signal-soft); color: #0E8578; }
+.badge-signal { background: var(--signal-soft); color: #7F1D1D; }
 
 /* Toasts / overlays */
 .toast-stack { position: fixed; bottom: 16px; left: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; align-items: center; }

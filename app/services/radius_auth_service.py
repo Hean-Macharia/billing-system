@@ -90,19 +90,27 @@ class RadiusAuthService:
         # 6. Check subscription status
         if user.subscription_id:
             sub = await self.subscription_collection.find_one({"_id": ObjectId(user.subscription_id)})
-            if sub:
-                sub_status = sub.get("status")
-                if sub_status in ("suspended", "expired", "cancelled", "terminated"):
-                    return RadiusAuthResponse(
-                        control_Auth_Type="Reject",
-                        reply_Reply_Message=f"Subscription {sub_status}",
-                    )
-                # Check data cap
-                if user.data_cap_bytes and sub.get("data_used_bytes", 0) >= user.data_cap_bytes:
-                    return RadiusAuthResponse(
-                        control_Auth_Type="Reject",
-                        reply_Reply_message="Data limit exceeded",
-                    )
+            if not sub:
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message="Subscription not found",
+                )
+            sub_status = sub.get("status")
+            if sub_status != "active":
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message=f"Subscription {sub_status}",
+                )
+
+            # Check data cap
+            if (
+                user.data_cap_bytes is not None
+                and sub.get("data_used_bytes", 0) >= user.data_cap_bytes
+            ):
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message="Data limit exceeded",
+                )
 
         # 7. Update last login info
         await self.user_collection.update_one(
@@ -412,7 +420,7 @@ class RadiusAuthService:
             "updated_at": now,
         }
 
-        await self.acct_collection.update_one(
+        accounting_result = await self.acct_collection.update_one(
             {"acct_session_id": req.Acct_Session_Id},
             {"$setOnInsert": doc},
             upsert=True,
@@ -422,7 +430,7 @@ class RadiusAuthService:
         await self.session_collection.update_one(
             {"acct_session_id": req.Acct_Session_Id},
             {
-                "$set": {
+                "$setOnInsert": {
                     "acct_session_id": req.Acct_Session_Id,
                     "username": req.User_Name or "unknown",
                     "nas_ip_address": req.NAS_IP_Address or "",
@@ -444,7 +452,7 @@ class RadiusAuthService:
         )
 
         # Update user session count
-        if req.User_Name:
+        if req.User_Name and accounting_result.upserted_id is not None:
             await self.user_collection.update_one(
                 {"username": req.User_Name},
                 {"$inc": {"total_sessions": 1}},
@@ -465,7 +473,10 @@ class RadiusAuthService:
 
         # Update accounting record
         result = await self.acct_collection.update_one(
-            {"acct_session_id": req.Acct_Session_Id},
+            {
+                "acct_session_id": req.Acct_Session_Id,
+                "acct_stop_time": {"$exists": False},
+            },
             {
                 "$set": {
                     "acct_stop_time": now,
@@ -480,6 +491,9 @@ class RadiusAuthService:
                 }
             },
         )
+        if result.modified_count == 0:
+            logger.info("Duplicate or unmatched RADIUS accounting stop ignored")
+            return
 
         # Update live session to offline
         await self.session_collection.update_one(

@@ -44,7 +44,12 @@ class VoucherService:
     # ------------------------------------------------------------------ #
     # Batch generation
     # ------------------------------------------------------------------ #
-    async def create_batch(self, data: VoucherBatchCreate, created_by: Optional[str] = None) -> VoucherBatch:
+    async def create_batch(
+        self,
+        data: VoucherBatchCreate,
+        created_by: Optional[str] = None,
+        purchase_transaction_id: Optional[str] = None,
+    ) -> VoucherBatch:
         duration_hours = data.duration_hours
         data_allowance_mb = data.data_allowance_mb
         rate_limit = data.rate_limit
@@ -86,6 +91,7 @@ class VoucherService:
             "activated_count": 0,
             "used_count": 0,
             "created_by": created_by,
+            "purchase_transaction_id": purchase_transaction_id,
             "created_at": now,
             "updated_at": now,
         }
@@ -93,6 +99,9 @@ class VoucherService:
         batch_id = str(batch_result.inserted_id)
 
         vouchers = self._build_voucher_docs(data, batch_id, now, duration_hours, data_allowance_mb, rate_limit, max_devices, price, currency)
+        if purchase_transaction_id:
+            for voucher in vouchers:
+                voucher["purchase_transaction_id"] = purchase_transaction_id
         inserted = await self._insert_with_retry(vouchers, data.code_length, data.code_prefix)
 
         activated_count = sum(1 for v in inserted if v["status"] == VoucherStatus.ACTIVE.value)
@@ -106,6 +115,71 @@ class VoucherService:
         batch_doc["generated_count"] = len(inserted)
         batch_doc["activated_count"] = activated_count
         return VoucherBatch(**batch_doc)
+
+    async def create_hotspot_purchase_voucher(
+        self,
+        purchase_transaction_id: str,
+        plan_id: str,
+        device_mac: str,
+        device_type: str,
+    ) -> dict:
+        """Create or retrieve the single voucher associated with a paid purchase."""
+        existing = await self.vouchers.find_one(
+            {"purchase_transaction_id": purchase_transaction_id}
+        )
+        if existing:
+            await self.vouchers.update_one(
+                {"_id": existing["_id"]},
+                {
+                    "$set": {
+                        "bound_mac": device_mac,
+                        "device_type": device_type,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            existing["bound_mac"] = device_mac
+            existing["device_type"] = device_type
+            return existing
+
+        data = VoucherBatchCreate(
+            batch_name=f"HotSpot self-service purchase {purchase_transaction_id}",
+            quantity=1,
+            plan_id=plan_id,
+            activate_on_generation=True,
+        )
+        try:
+            await self.create_batch(
+                data,
+                purchase_transaction_id=purchase_transaction_id,
+            )
+        except Exception:
+            existing = await self.vouchers.find_one(
+                {"purchase_transaction_id": purchase_transaction_id}
+            )
+            if not existing:
+                raise
+            return existing
+
+        voucher = await self.vouchers.find_one(
+            {"purchase_transaction_id": purchase_transaction_id}
+        )
+        if not voucher:
+            raise ConflictError("Purchase voucher generation did not produce a voucher")
+
+        await self.vouchers.update_one(
+            {"_id": voucher["_id"]},
+            {
+                "$set": {
+                    "bound_mac": device_mac,
+                    "device_type": device_type,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        voucher["bound_mac"] = device_mac
+        voucher["device_type"] = device_type
+        return voucher
 
     def _build_voucher_docs(
         self, data: VoucherBatchCreate, batch_id: str, now: datetime,

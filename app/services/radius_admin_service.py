@@ -206,6 +206,8 @@ class RadiusAdminService:
                 "status": "active" if sub.get("status") == "active" else sub.get("status"),
                 "updated_at": datetime.now(timezone.utc),
             }
+            if sub.get("pppoe_password"):
+                update["password"] = sub["pppoe_password"]
             if package:
                 update["rate_limit"] = package.get("rate_limit")
                 update["session_timeout"] = package.get("session_timeout")

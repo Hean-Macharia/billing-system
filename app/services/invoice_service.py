@@ -169,29 +169,77 @@ class InvoiceService:
         return await self.get_by_id(invoice_id)
 
     async def apply_payment(self, invoice_id: str, payment_id: str, amount: float) -> InvoiceInDB:
-        invoice = await self.get_by_id(invoice_id)
-        new_paid = invoice.amount_paid_kes + amount
-        new_balance = invoice.total_kes - new_paid
-        new_status = InvoiceStatus.PARTIAL.value if new_balance > 0 else InvoiceStatus.PAID.value
-        paid_date = datetime.now(timezone.utc) if new_balance <= 0 else None
+        invoice_oid = ObjectId(invoice_id)
+        for _ in range(5):
+            invoice = await self.get_by_id(invoice_id)
+            if payment_id in invoice.payment_ids:
+                await self.db.customers.update_one(
+                    {
+                        "_id": ObjectId(invoice.customer_id),
+                        "applied_payment_ids": {"$ne": payment_id},
+                    },
+                    {
+                        "$inc": {"outstanding_balance": -amount},
+                        "$addToSet": {"applied_payment_ids": payment_id},
+                        "$set": {
+                            "last_payment_at": datetime.now(timezone.utc),
+                            "updated_at": datetime.now(timezone.utc),
+                        },
+                    },
+                )
+                return invoice
 
-        result = await self.collection.update_one(
-            {"_id": ObjectId(invoice_id)},
-            {"$set": {
-                "amount_paid_kes": new_paid, "balance_due_kes": new_balance,
-                "status": new_status, "paid_date": paid_date,
-                "updated_at": datetime.now(timezone.utc),
-            }, "$push": {"payment_ids": payment_id}},
-        )
-        if result.matched_count == 0:
-            raise NotFoundError("Invoice not found")
+            new_paid = invoice.amount_paid_kes + amount
+            new_balance = invoice.total_kes - new_paid
+            new_status = InvoiceStatus.PARTIAL.value if new_balance > 0 else InvoiceStatus.PAID.value
+            now = datetime.now(timezone.utc)
+            result = await self.collection.update_one(
+                {
+                    "_id": invoice_oid,
+                    "amount_paid_kes": invoice.amount_paid_kes,
+                    "payment_ids": {"$ne": payment_id},
+                },
+                {
+                    "$set": {
+                        "amount_paid_kes": new_paid,
+                        "balance_due_kes": new_balance,
+                        "status": new_status,
+                        "paid_date": now if new_balance <= 0 else None,
+                        "updated_at": now,
+                    },
+                    "$addToSet": {"payment_ids": payment_id},
+                },
+            )
+            if result.modified_count:
+                await self.db.customers.update_one(
+                    {
+                        "_id": ObjectId(invoice.customer_id),
+                        "applied_payment_ids": {"$ne": payment_id},
+                    },
+                    {
+                        "$inc": {"outstanding_balance": -amount},
+                        "$addToSet": {"applied_payment_ids": payment_id},
+                        "$set": {"last_payment_at": now, "updated_at": now},
+                    },
+                )
+                return await self.get_by_id(invoice_id)
 
-        await self.db.customers.update_one(
-            {"_id": ObjectId(invoice.customer_id)},
-            {"$inc": {"outstanding_balance": -amount},
-             "$set": {"last_payment_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)}},
-        )
-        return await self.get_by_id(invoice_id)
+        latest = await self.get_by_id(invoice_id)
+        if payment_id in latest.payment_ids:
+            now = datetime.now(timezone.utc)
+            await self.db.customers.update_one(
+                {
+                    "_id": ObjectId(latest.customer_id),
+                    "applied_payment_ids": {"$ne": payment_id},
+                },
+                {
+                    "$inc": {"outstanding_balance": -amount},
+                    "$addToSet": {"applied_payment_ids": payment_id},
+                    "$set": {"last_payment_at": now, "updated_at": now},
+                },
+            )
+            return latest
+        raise ConflictError("Invoice changed while applying payment; retry settlement")
 
     async def get_overdue_invoices(self) -> List[InvoiceInDB]:
         query = {

@@ -34,7 +34,7 @@ Pages._openPaySheet = function (invoice) {
     try {
       await Api.post('/api/v1/portal/payments/stk-push', { invoice_id: invoice._id, phone_number });
       overlay.querySelector('#pay-status').innerHTML = `
-        <div style="width:44px;height:44px;border-radius:50%;background:var(--signal-soft);color:#0E8578;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;">${Icons.check}</div>
+        <div style="width:44px;height:44px;border-radius:50%;background:#E4F8EC;color:#12894A;display:flex;align-items:center;justify-content:center;margin:0 auto 12px;">${Icons.check}</div>
         <div style="font-weight:700;">Request sent</div>
         <div style="font-size:12.5px;color:var(--muted);margin-top:4px;">Complete it on your phone, then check back here shortly — your balance updates automatically once M-Pesa confirms.</div>`;
       btn.textContent = 'Done'; btn.disabled = false;

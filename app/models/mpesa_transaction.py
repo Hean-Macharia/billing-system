@@ -39,6 +39,9 @@ class MpesaTransaction(BaseModel):
     mpesa_receipt_number: Optional[str] = None
     mpesa_transaction_date: Optional[str] = None  # YYYYMMDDHHMMSS from Safaricom
     callback_received: bool = False
+    callback_verification_pending: bool = False
+    settlement_review_required: bool = False
+    settlement_status: Optional[str] = None
     callback_payload: Optional[dict] = None
     payment_id: Optional[str] = None  # Links to app.models.payment.Payment
     settled: bool = False  # True once invoice+subscription fully processed

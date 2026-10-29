@@ -77,6 +77,7 @@ INDEXES = {
     ],
     "vouchers": [
         {"keys": [("voucher_code", 1)], "unique": True},
+        {"keys": [("purchase_transaction_id", 1)], "unique": True, "sparse": True},
         {"keys": [("batch_id", 1)]},
         {"keys": [("status", 1)]},
         {"keys": [("expiry_date", 1)]},
@@ -279,8 +280,9 @@ class Database:
             collection = self.db[collection_name]
             for index in indexes:
                 try:
-                    keys = index.pop("keys")
-                    await collection.create_index(keys, **index)
+                    keys = index["keys"]
+                    options = {name: value for name, value in index.items() if name != "keys"}
+                    await collection.create_index(keys, **options)
                 except Exception as e:
                     logger.warning(f"Index creation warning for {collection_name}: {e}")
         logger.info("Database indexes created/verified")

@@ -50,6 +50,9 @@ class MpesaTransactionResponse(BaseModel):
     result_desc: Optional[str]
     mpesa_receipt_number: Optional[str]
     callback_received: bool
+    callback_verification_pending: bool
+    settlement_review_required: bool
+    settlement_status: Optional[str]
     payment_id: Optional[str]
     settled: bool
     settlement_error: Optional[str]

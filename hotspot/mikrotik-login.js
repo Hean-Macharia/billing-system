@@ -78,7 +78,14 @@
 
     const chapId = params.get('chap-id');
     const chapChallenge = params.get('chap-challenge');
-    if (!/^[\da-f]{2}$/i.test(chapId || '') || !/^[\da-f]{32}$/i.test(chapChallenge || '')) {
+    if (
+      !chapId
+      || chapId.length > 16
+      || !/^[\x20-\x7e]+$/.test(chapId)
+      || !chapChallenge
+      || chapChallenge.length > 128
+      || !/^[\x20-\x7e]+$/.test(chapChallenge)
+    ) {
       return { ok: false, state: 'invalid', message: CHAP_ERROR };
     }
 

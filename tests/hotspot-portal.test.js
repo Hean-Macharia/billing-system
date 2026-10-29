@@ -26,6 +26,18 @@ test('supports the existing login_url and dst redirect aliases', () => {
   assert.equal(redirect.destination, 'https://example.com/');
 });
 
+test('preserves non-hex RouterOS CHAP substitutions as their supplied text', () => {
+  const redirect = parseRedirectParameters(
+    '?link-login-only=http%3A%2F%2Frouter.hotspot%2Flogin&chap-id=10&chap-challenge=challenge-value',
+  );
+  assert.equal(redirect.ok, true);
+
+  assert.deepEqual(createLoginSubmission(redirect, 'VOUCHER123').fields, {
+    username: 'VOUCHER123',
+    password: 'ae0405d21a153cd794f14373b984800a',
+  });
+});
+
 test('rejects missing and unsafe router parameters with useful feedback', () => {
   assert.equal(parseRedirectParameters('').state, 'missing');
   assert.match(parseRedirectParameters('?chap-id=00').message, /login URL/i);

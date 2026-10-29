@@ -104,9 +104,9 @@ Allow the portal's web host in the HotSpot walled garden so guests can load the 
 /ip hotspot walled-garden add dst-host="hotspot.example.com" action=allow
 ```
 
-Keep the router's existing HotSpot `login.html` as a backup, then replace it with a redirect page like this. Configure the HotSpot `dns-name` to a name such as `wifi.lan`, install a matching TLS certificate, and set that certificate on the HotSpot profile before enabling `login-by=https`. The `login_url` value is used by the portal's optional **Connect to WiFi** action; it must point to a private IPv4 address or a local `.lan`, `.local`, or `.hotspot` name and must be HTTPS when the portal is HTTPS. Otherwise browsers block the cross-origin sign-in and guests can still enter the voucher on the router's login page.
+Back up the router's existing HotSpot `login.html` before changing it, so it can be restored. Install the following as `login.html` (not `redirect.html`): RouterOS documents `chap-id` and `chap-challenge` as login-page-only variables, so a separate redirect page cannot supply the HTTP-CHAP values. The browser's GET form encoding carries each value to the hosted portal once. Configure the HotSpot `dns-name` to a name such as `wifi.lan`; for `login-by=https`, install a matching TLS certificate and set it on the HotSpot profile. The portal validates the router login endpoint before offering its optional **Connect to WiFi** action. If the hosted portal is HTTPS, test the router's login scheme in the target captive browsers; a working portal page alone does not establish that the browser can submit to the router.
 
-For a test-only setup without a router certificate, the fallback is `login-by=http-pap` and `http://` for the portal and router login. Do not use that mode for real voucher traffic: the voucher is submitted without transport encryption.
+Do not switch the production profile to PAP or weaken the existing login method to work around certificate or browser issues.
 
 ```html
 <!doctype html>
@@ -117,10 +117,13 @@ For a test-only setup without a router certificate, the fallback is `login-by=ht
 </head>
 <body>
   <form id="portal" action="https://hotspot.example.com/hotspot/" method="get">
-    <input type="hidden" name="mac" value="$(mac-esc)">
-    <input type="hidden" name="ip" value="$(ip-esc)">
-    <input type="hidden" name="login_url" value="$(link-login-only-esc)">
-    <input type="hidden" name="dst" value="$(link-orig-esc)">
+    <input type="hidden" name="mac" value="$(mac)">
+    <input type="hidden" name="ip" value="$(ip)">
+    <input type="hidden" name="link-login-only" value="$(link-login-only)">
+    <input type="hidden" name="link-orig" value="$(link-orig)">
+    <input type="hidden" name="chap-id" value="$(chap-id)">
+    <input type="hidden" name="chap-challenge" value="$(chap-challenge)">
+    <button type="submit">Open WiFi portal</button>
   </form>
   <p>Opening the DEVZEN CREATIONS WiFi portal…</p>
   <script>document.getElementById('portal').submit();</script>
@@ -132,7 +135,7 @@ Upload that file to the HotSpot file directory for the profile (`html-directory`
 
 ## 4. Voucher login flow and limits
 
-After M-Pesa confirms payment, the portal displays the voucher. If the RouterOS redirect supplied a safe `login_url` and the browser can use its scheme, **Connect to WiFi** posts the voucher to the MikroTik login endpoint. Otherwise, return to the RouterOS login screen and enter the voucher as the username (and as the password too if the login form requires one). The voucher is a secret; do not share it.
+After voucher validation, the portal offers **Connect to WiFi** only when the RouterOS redirect supplied a valid login URL and CHAP parameters. It submits the voucher username and the HTTP-CHAP digest to the router; only MikroTik and RADIUS can accept the login. Otherwise, use the router's original login page as a manual fallback. Voucher verification alone does not connect the client.
 
 FreeRADIUS calls the API's internal `/api/v1/radius/auth` and `/api/v1/radius/accounting` routes with the separate `RADIUS_API_SECRET`. Nginx blocks public access to those internal routes. The API validates the RADIUS payload, checks voucher status, expiry, device binding and applicable plan limits, and records accounting events. It supplies the remaining duration and data quota, rather than restarting them on a same-device retry. A repeat auth request for the same device is allowed so normal RADIUS retries do not consume a voucher twice; a different device is rejected for an already-claimed voucher.
 

@@ -3,7 +3,7 @@ Pages.login = function (root) {
     <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 20% 20%, #1B2A4A, #10192F 60%);padding:20px;">
       <div style="width:100%;max-width:380px;">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:28px;justify-content:center;">
-          <div class="mark" style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#2DD4BF,#1a8f82);display:flex;align-items:center;justify-content:center;color:#063B36;">${Icons.wifi}</div>
+          <div class="mark" style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,#EF4444,#991B1B);display:flex;align-items:center;justify-content:center;color:#FFFFFF;">${Icons.wifi}</div>
           <div>
             <div style="font-weight:700;font-size:16px;color:#E8ECF7;">DEVZEN CREATIONS</div>
             <div style="font-size:12px;color:#93A2C4;">Ops Console</div>

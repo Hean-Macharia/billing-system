@@ -20,7 +20,7 @@ Pages.dashboard = async function (root) {
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Your plan</h2><a href="#/subscription" style="font-size:12.5px;font-weight:700;color:#0E8578;">Details</a></div>
+      <div class="card-head"><h2>Your plan</h2><a href="#/subscription" style="font-size:12.5px;font-weight:700;color:#B91C1C;">Details</a></div>
       ${d.subscription ? `
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>
@@ -35,7 +35,7 @@ Pages.dashboard = async function (root) {
     </div>
 
     <div class="card">
-      <div class="card-head"><h2>Last payment</h2><a href="#/payments" style="font-size:12.5px;font-weight:700;color:#0E8578;">History</a></div>
+      <div class="card-head"><h2>Last payment</h2><a href="#/payments" style="font-size:12.5px;font-weight:700;color:#B91C1C;">History</a></div>
       ${d.last_payment ? `
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <div>

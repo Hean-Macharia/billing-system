@@ -54,7 +54,7 @@ Pages.reports = async function (root) {
                 <span class="mono">${fmtMoney(amt)}</span>
               </div>
               <div style="height:6px;background:#EEF1F8;border-radius:100px;overflow:hidden;">
-                <div style="height:100%;width:${Math.max(4, (amt / Math.max(...Object.values(byMethod))) * 100)}%;background:#2DD4BF;border-radius:100px;"></div>
+                <div style="height:100%;width:${Math.max(4, (amt / Math.max(...Object.values(byMethod))) * 100)}%;background:#B91C1C;border-radius:100px;"></div>
               </div>
             </div>`).join('') || '<div style="color:#8792AC;font-size:13px;">No completed payments in the recent sample.</div>'}
         </div>
@@ -81,7 +81,7 @@ Pages.reports = async function (root) {
       type: 'bar',
       data: {
         labels: days.map(d2 => d2.slice(5)),
-        datasets: [{ label: 'Revenue (KES)', data: days.map(d2 => byDay[d2]), backgroundColor: '#2DD4BF', borderRadius: 4 }],
+        datasets: [{ label: 'Revenue (KES)', data: days.map(d2 => byDay[d2]), backgroundColor: '#B91C1C', borderRadius: 4 }],
       },
       options: {
         plugins: { legend: { display: false } },

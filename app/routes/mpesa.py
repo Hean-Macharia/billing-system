@@ -41,6 +41,9 @@ def _tx_to_response(tx):
         "mpesa_receipt_number": tx.mpesa_receipt_number,
         "mpesa_transaction_date": tx.mpesa_transaction_date,
         "callback_received": tx.callback_received,
+        "callback_verification_pending": tx.callback_verification_pending,
+        "settlement_review_required": tx.settlement_review_required,
+        "settlement_status": tx.settlement_status,
         "payment_id": tx.payment_id,
         "settled": tx.settled,
         "settlement_error": tx.settlement_error,
@@ -77,13 +80,13 @@ async def mpesa_callback(
     Idempotency is handled internally to prevent duplicate processing.
     """
     body = await request.json()
-    logger.info(f"M-Pesa callback received: {body}")
+    logger.info("M-Pesa callback received")
 
     service = MpesaService(db)
     tx = await service.process_callback(body)
     return success_response(
-        message=f"Callback processed: {tx.status.value}",
-        data=_tx_to_response(tx),
+        message="Callback processed",
+        data={"status": tx.status.value},
     )
 
 

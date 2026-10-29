@@ -17,7 +17,7 @@
     paper     #F4F6FB   light content surface (tables sit on this, not on ink)
     text      #E8ECF7   primary text on dark
     muted     #93A2C4   secondary text on dark
-    signal    #2DD4BF   primary accent — teal, "connectivity"
+    signal    #B91C1C   primary brand accent — crimson red
     amber     #F2A93B   secondary accent — pending / warn / highland-sunset warmth
     good      #34C77A   active / online / paid
     bad       #F1616B   offline / overdue / failed
@@ -35,8 +35,8 @@
   --paper-line: #DFE4F0;
   --text: #E8ECF7;
   --muted: #93A2C4;
-  --signal: #2DD4BF;
-  --signal-ink: #063B36;
+  --signal: #B91C1C;
+  --signal-ink: #FFFFFF;
   --amber: #F2A93B;
   --good: #34C77A;
   --bad: #F1616B;
@@ -109,7 +109,7 @@ a { color: inherit; }
 .sidebar-brand .mark {
   width: 32px; height: 32px;
   border-radius: 8px;
-  background: linear-gradient(135deg, var(--signal), #1a8f82);
+  background: linear-gradient(135deg, #EF4444, #991B1B);
   display: flex; align-items: center; justify-content: center;
   color: var(--signal-ink);
   font-weight: 800;
@@ -196,7 +196,8 @@ a { color: inherit; }
 .topbar .crumb { font-size: 12.5px; color: #8792AC; margin-bottom: 1px; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 
-.page { padding: 24px; flex: 1; }
+.page { padding: 24px; flex: 1; animation: page-enter 0.24s ease-out both; }
+@keyframes page-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 .page-inner { max-width: 1320px; }
 
 /* ---------------------------------------------------------------- */
@@ -343,7 +344,7 @@ table.data tbody tr:last-child td { border-bottom: none; }
 .badge-amber { background: #FDF1DE; color: #A8650D; }
 .badge-bad { background: #FCEAEC; color: #B4293A; }
 .badge-muted { background: #EEF1F8; color: #5A6B8C; }
-.badge-signal { background: #E1FBF7; color: #0E8578; }
+.badge-signal { background: #FEE2E2; color: #7F1D1D; }
 
 /* ---------------------------------------------------------------- */
 /* Modal / Drawer                                                     */

@@ -4,7 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1"/>
 <title>DEVZEN CREATIONS WiFi</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><rect width=%2224%22 height=%2224%22 rx=%226%22 fill=%22%232DD4BF%22/><path d=%22M4 9.5a14 14 0 0116 0%22 stroke=%22%23063B36%22 stroke-width=%222%22 fill=%22none%22/><path d=%226 13a10 10 0 0112 0%22 stroke=%22%23063B36%22 stroke-width=%222%22 fill=%22none%22/><circle cx=%2212%22 cy=%2217%22 r=%221.6%22 fill=%22%23063B36%22/></svg>"/>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><rect width=%2224%22 height=%2224%22 rx=%226%22 fill=%22%23B91C1C%22/><path d=%22M4 9.5a14 14 0 0116 0%22 stroke=%22%23FFFFFF%22 stroke-width=%222%22 fill=%22none%22/><path d=%226 13a10 10 0 0112 0%22 stroke=%22%23FFFFFF%22 stroke-width=%222%22 fill=%22none%22/><circle cx=%2212%22 cy=%2217%22 r=%221.6%22 fill=%22%23FFFFFF%22/></svg>"/>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
@@ -15,9 +15,9 @@
     --ink: #101a2b;
     --muted: #67758d;
     --line: #e5eaf4;
-    --accent: #00a7a0;
-    --accent-dark: #0c5c62;
-    --accent-soft: #dffaf6;
+    --accent: #B91C1C;
+    --accent-dark: #7F1D1D;
+    --accent-soft: #FEE2E2;
     --amber: #f5b942;
     --danger: #d24545;
     --success: #28a76d;
@@ -70,10 +70,10 @@
   .brand-mark {
     width: 42px; height: 42px; border-radius: 14px;
     display: grid; place-items: center;
-    background: linear-gradient(135deg, var(--accent), #1eb7a9);
+    background: linear-gradient(135deg, #EF4444, #991B1B);
     color: #fff;
     font-size: 20px;
-    box-shadow: 0 12px 20px rgba(0, 167, 160, 0.35);
+    box-shadow: 0 12px 20px rgba(185, 28, 28, 0.24);
   }
 
   .brand-text {
@@ -113,7 +113,7 @@
     inset: auto -60px -80px auto;
     width: 260px; height: 260px;
     border-radius: 50%;
-    background: rgba(0, 167, 160, 0.18);
+    background: rgba(185, 28, 28, 0.18);
   }
 
   .hero-copy {
@@ -475,7 +475,7 @@
     border: none;
     padding: 10px 16px;
     border-radius: 999px;
-    background: linear-gradient(135deg, var(--accent), #0e9f9b);
+    background: linear-gradient(135deg, var(--accent), #991B1B);
     color: white;
     font-weight: 800;
     cursor: pointer;
@@ -717,7 +717,7 @@
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, var(--accent), #0fa1a2);
+    background: linear-gradient(135deg, var(--accent), #991B1B);
     color: white;
   }
 
@@ -809,6 +809,14 @@
     .voucher-login { grid-template-columns: 1fr; }
     .voucher-login .btn { width: 100%; }
     .device-options { grid-template-columns: 1fr; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 </style>
 </head>

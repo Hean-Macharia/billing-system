@@ -11,10 +11,12 @@ Phase 5 responsibilities:
 """
 import hashlib
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import List, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument
 
 from app.core.config import settings  # <-- added for credentials
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -24,9 +26,7 @@ from app.models.mpesa_transaction import MpesaTransactionInDB, MpesaTransactionS
 from app.models.payment import PaymentMethod, PaymentStatus
 from app.schemas.mpesa import StkPushRequest
 from app.schemas.payment import PaymentCreate
-from app.services.invoice_service import InvoiceService
 from app.services.payment_service import PaymentService
-from app.services.subscription_service import SubscriptionService
 
 logger = get_logger(__name__)
 
@@ -131,7 +131,7 @@ class MpesaService:
     # ── CALLBACK PROCESSING (IDEMPOTENT) ──
 
     async def process_callback(self, body: dict) -> MpesaTransactionInDB:
-        """Process Safaricom STK callback. Fully idempotent.
+        """Verify and process a Safaricom callback against Daraja's status API.
 
         Args:
             body: Raw JSON body from Safaricom callback.
@@ -139,88 +139,273 @@ class MpesaService:
         Returns:
             Updated MpesaTransactionInDB
         """
-        stk_callback = body.get("Body", {}).get("stkCallback", {})
+        if not isinstance(body, dict):
+            raise ValidationError("Invalid M-Pesa callback")
+        callback_body = body.get("Body")
+        stk_callback = callback_body.get("stkCallback") if isinstance(callback_body, dict) else None
+        if not isinstance(stk_callback, dict):
+            raise ValidationError("Invalid M-Pesa callback")
         checkout_request_id = stk_callback.get("CheckoutRequestID")
-        result_code = stk_callback.get("ResultCode")
-        result_desc = stk_callback.get("ResultDesc", "")
 
-        if not checkout_request_id:
+        if not isinstance(checkout_request_id, str) or not checkout_request_id.strip():
             raise ValidationError("Missing CheckoutRequestID in callback")
 
-        # Find transaction by checkout_request_id
         doc = await self.collection.find_one({"checkout_request_id": checkout_request_id})
         if not doc:
-            logger.warning(f"Callback for unknown CheckoutRequestID: {checkout_request_id}")
+            logger.warning("Callback for unknown checkout request")
             raise NotFoundError("Transaction not found for this checkout request")
 
         tx_id = str(doc["_id"])
 
         # ── IDEMPOTENCY CHECK ──
         if doc.get("callback_received"):
-            logger.info(f"Duplicate callback ignored for {checkout_request_id}")
+            if (
+                doc.get("status") == MpesaTransactionStatus.SUCCESS.value
+                and not doc.get("settled")
+                and not doc.get("settlement_review_required")
+            ):
+                return await self._settle_verified_success(doc)
+            logger.info("Duplicate M-Pesa callback ignored")
+            doc["_id"] = tx_id
+            return MpesaTransactionInDB(**doc)
+        if doc.get("settlement_review_required"):
             doc["_id"] = tx_id
             return MpesaTransactionInDB(**doc)
 
-        # Extract metadata on success
+        provider_result = await self._query_provider_status(checkout_request_id)
+        if provider_result is None:
+            await self.collection.update_one(
+                {
+                    "_id": ObjectId(tx_id),
+                    "callback_received": {"$ne": True},
+                    "settlement_review_required": {"$ne": True},
+                },
+                {
+                    "$set": {
+                        "callback_verification_pending": True,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            doc["_id"] = tx_id
+            doc["callback_verification_pending"] = True
+            return MpesaTransactionInDB(**doc)
+
+        return await self._apply_provider_result(
+            doc,
+            provider_result,
+            callback_metadata=stk_callback.get("CallbackMetadata"),
+        )
+
+    async def _query_provider_status(self, checkout_request_id: str) -> Optional[dict]:
+        """Return a status response confirmed by Daraja for this checkout."""
+        try:
+            response = self.daraja.query_stk_status(checkout_request_id)
+        except Exception as exc:
+            logger.warning(
+                "M-Pesa provider status verification unavailable: %s",
+                type(exc).__name__,
+            )
+            return None
+
+        if (
+            not isinstance(response, dict)
+            or response.get("CheckoutRequestID") != checkout_request_id
+            or self._parse_result_code(response.get("ResultCode")) is None
+        ):
+            logger.warning("M-Pesa provider returned an incomplete status verification response")
+            return None
+        return response
+
+    @staticmethod
+    def _parse_result_code(value: object) -> Optional[int]:
+        if type(value) is int:
+            return value
+        if isinstance(value, str) and value.isdecimal():
+            return int(value)
+        return None
+
+    async def _settle_verified_success(self, doc: dict) -> MpesaTransactionInDB:
+        """Claim and retry settlement for a provider-confirmed successful payment."""
+        tx_id = str(doc["_id"])
+        now = datetime.now(timezone.utc)
+        claim = await self.collection.find_one_and_update(
+            {
+                "_id": ObjectId(tx_id),
+                "status": MpesaTransactionStatus.SUCCESS.value,
+                "settled": {"$ne": True},
+                "settlement_review_required": {"$ne": True},
+                "$or": [
+                    {"settlement_status": {"$ne": "processing"}},
+                    {
+                        "settlement_status": "processing",
+                        "settlement_started_at": {"$lte": now - timedelta(minutes=5)},
+                    },
+                ],
+            },
+            {
+                "$set": {
+                    "settlement_status": "processing",
+                    "settlement_started_at": now,
+                    "updated_at": now,
+                },
+                "$unset": {"settlement_error": ""},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if not claim:
+            return await self.get_by_id(tx_id)
+
+        claim["_id"] = str(claim["_id"])
+        try:
+            if claim.get("transaction_type") == "hotspot_purchase":
+                await self._settle_hotspot_purchase(
+                    tx_id,
+                    claim,
+                    claim["amount"],
+                    claim.get("mpesa_receipt_number"),
+                    claim["phone_number"],
+                )
+            else:
+                await self._settle_transaction(
+                    tx_id,
+                    claim,
+                    claim["amount"],
+                    claim.get("mpesa_receipt_number"),
+                    claim["phone_number"],
+                )
+        except Exception as exc:
+            logger.error("M-Pesa settlement failed for tx %s: %s", tx_id, exc)
+            await self.collection.update_one(
+                {"_id": ObjectId(tx_id), "settlement_status": "processing"},
+                {
+                    "$set": {
+                        "settled": False,
+                        "settlement_status": "failed",
+                        "settlement_error": str(exc),
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+        else:
+            await self.collection.update_one(
+                {"_id": ObjectId(tx_id), "settlement_status": "processing"},
+                {
+                    "$set": {
+                        "settled": True,
+                        "settlement_status": "completed",
+                        "settlement_error": None,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+
+        return await self.get_by_id(tx_id)
+
+    async def _apply_provider_result(
+        self,
+        doc: dict,
+        provider_result: dict,
+        callback_metadata: Optional[dict] = None,
+    ) -> MpesaTransactionInDB:
+        """Apply a provider-verified result once, using the initiated amount."""
+        tx_id = str(doc["_id"])
+        if doc.get("settlement_review_required"):
+            doc["_id"] = tx_id
+            return MpesaTransactionInDB(**doc)
+
+        checkout_request_id = doc.get("checkout_request_id")
+        if provider_result.get("CheckoutRequestID") != checkout_request_id:
+            logger.warning("M-Pesa status response did not match the stored checkout")
+            doc["_id"] = tx_id
+            return MpesaTransactionInDB(**doc)
+
+        result_code = self._parse_result_code(provider_result.get("ResultCode"))
+        if result_code is None:
+            doc["_id"] = tx_id
+            return MpesaTransactionInDB(**doc)
+
+        if result_code == 0:
+            status = MpesaTransactionStatus.SUCCESS
+        elif result_code in (1032, 1037):
+            status = MpesaTransactionStatus.CANCELLED
+        else:
+            status = MpesaTransactionStatus.FAILED
+        amount = doc.get("amount", 0)
         mpesa_receipt = None
         mpesa_date = None
-        phone_number = doc.get("phone_number")
-        amount = doc.get("amount", 0)
 
-        if result_code == 0 and stk_callback.get("CallbackMetadata"):
-            items = stk_callback["CallbackMetadata"].get("Item", [])
-            for item in items:
-                name = item.get("Name")
-                value = item.get("Value")
-                if name == "MpesaReceiptNumber":
-                    mpesa_receipt = value
-                elif name == "TransactionDate":
-                    mpesa_date = str(value) if value else None
-                elif name == "PhoneNumber":
-                    phone_number = str(value) if value else phone_number
-                elif name == "Amount":
-                    amount = float(value) if value else amount
-
-        # Determine status
-        status = MpesaTransactionStatus.SUCCESS if result_code == 0 else MpesaTransactionStatus.FAILED
-        if result_code is not None and result_code != 0:
-            # Common result codes: 1=cancelled, 1032=timeout, 1037=cancelled
-            if result_code in (1032, 1037):
-                status = MpesaTransactionStatus.CANCELLED
-            elif result_code == 1032:
-                status = MpesaTransactionStatus.TIMEOUT
+        metadata = (
+            callback_metadata
+            if callback_metadata is not None
+            else provider_result.get("CallbackMetadata")
+        )
+        if status == MpesaTransactionStatus.SUCCESS and isinstance(metadata, dict):
+            items = metadata.get("Item", [])
+            if isinstance(items, list):
+                values = {
+                    item.get("Name"): item.get("Value")
+                    for item in items
+                    if isinstance(item, dict) and isinstance(item.get("Name"), str)
+                }
+                reported_amount = values.get("Amount")
+                amount_matches = True
+                if reported_amount is not None:
+                    try:
+                        amount_matches = Decimal(str(reported_amount)) == Decimal(str(amount))
+                    except (InvalidOperation, ValueError):
+                        amount_matches = False
+                if not amount_matches:
+                    logger.warning("Verified M-Pesa callback metadata requires settlement review")
+                    await self.collection.update_one(
+                        {"_id": ObjectId(tx_id), "callback_received": {"$ne": True}},
+                        {
+                            "$set": {
+                                "settlement_review_required": True,
+                                "callback_verification_pending": False,
+                                "updated_at": datetime.now(timezone.utc),
+                            }
+                        },
+                    )
+                    doc["_id"] = tx_id
+                    doc["settlement_review_required"] = True
+                    doc["callback_verification_pending"] = False
+                    return MpesaTransactionInDB(**doc)
+                receipt = values.get("MpesaReceiptNumber")
+                mpesa_receipt = str(receipt) if receipt is not None else None
+                transaction_date = values.get("TransactionDate")
+                mpesa_date = str(transaction_date) if transaction_date is not None else None
 
         now = datetime.now(timezone.utc)
-
-        # Update transaction record
-        await self.collection.update_one(
-            {"_id": ObjectId(tx_id)},
+        updated_doc = await self.collection.find_one_and_update(
+            {
+                "_id": ObjectId(tx_id),
+                "callback_received": {"$ne": True},
+            },
             {
                 "$set": {
                     "status": status.value,
                     "result_code": result_code,
-                    "result_desc": result_desc,
+                    "result_desc": provider_result.get("ResultDesc", ""),
                     "mpesa_receipt_number": mpesa_receipt,
                     "mpesa_transaction_date": mpesa_date,
-                    "phone_number": phone_number,
-                    "amount": amount,
                     "callback_received": True,
-                    "callback_payload": body,
+                    "callback_verification_pending": False,
                     "updated_at": now,
-                }
+                },
             },
+            return_document=ReturnDocument.AFTER,
         )
+        if not updated_doc:
+            latest_doc = await self.collection.find_one({"_id": ObjectId(tx_id)})
+            if not latest_doc:
+                raise NotFoundError("Transaction not found for this checkout request")
+            latest_doc["_id"] = tx_id
+            return MpesaTransactionInDB(**latest_doc)
 
-        logger.info(f"Callback processed: {checkout_request_id} -> {status.value} (Receipt: {mpesa_receipt})")
-
-        # ── SETTLEMENT: Payment -> Invoice -> Subscription ──
-        # (or, for a walk-up HotSpot buyer with no customer_id at all,
-        # voucher generation instead - see _settle_hotspot_purchase)
+        logger.info("M-Pesa provider result applied: status=%s", status.value)
         if status == MpesaTransactionStatus.SUCCESS:
-            if doc.get("transaction_type") == "hotspot_purchase":
-                await self._settle_hotspot_purchase(tx_id, doc, amount, mpesa_receipt, phone_number)
-            else:
-                await self._settle_transaction(tx_id, doc, amount, mpesa_receipt, phone_number)
+            return await self._settle_verified_success(updated_doc)
 
         return await self.get_by_id(tx_id)
 
@@ -237,45 +422,57 @@ class MpesaService:
             customer_id = tx_doc["customer_id"]
             invoice_id = tx_doc.get("invoice_id")
             subscription_id = tx_doc.get("subscription_id")
+            transaction_id = f"MPESA-{tx_id}"
 
-            # 1. Create Payment record
-            payment_data = PaymentCreate(
-                customer_id=customer_id,
-                invoice_id=invoice_id,
-                subscription_id=subscription_id,
-                amount_kes=amount,
-                payment_method=PaymentMethod.MPESA,
-                mpesa_phone_number=phone_number,
-                mpesa_receipt_number=mpesa_receipt,
-                notes=f"M-Pesa STK Push | Receipt: {mpesa_receipt}",
-            )
             payment_service = PaymentService(self.db)
-            payment = await payment_service.create(payment_data, created_by="system_mpesa")
+            existing_payment = await self.db.payments.find_one({"transaction_id": transaction_id})
+            if existing_payment:
+                payment = await payment_service.get_by_id(str(existing_payment["_id"]))
+            else:
+                payment_data = PaymentCreate(
+                    customer_id=customer_id,
+                    invoice_id=invoice_id,
+                    subscription_id=subscription_id,
+                    amount_kes=amount,
+                    payment_method=PaymentMethod.MPESA,
+                    mpesa_phone_number=phone_number,
+                    mpesa_receipt_number=mpesa_receipt,
+                    notes=f"M-Pesa STK Push | Receipt: {mpesa_receipt}",
+                    transaction_id=transaction_id,
+                )
+                try:
+                    payment = await payment_service.create(payment_data, created_by="system_mpesa")
+                except Exception:
+                    existing_payment = await self.db.payments.find_one({"transaction_id": transaction_id})
+                    if not existing_payment:
+                        raise
+                    payment = await payment_service.get_by_id(str(existing_payment["_id"]))
 
             # 2. Confirm payment (triggers invoice application in PaymentService)
             payment = await payment_service.confirm_payment(payment.id, invoice_id=invoice_id)
 
             # 3. Update subscription to active if exists
             if subscription_id:
-                sub_service = SubscriptionService(self.db)
-                await self.db.subscriptions.update_one(
-                    {"_id": ObjectId(subscription_id)},
-                    {
-                        "$set": {
-                            "status": "active",
-                            "last_payment_date": datetime.now(timezone.utc),
-                            "updated_at": datetime.now(timezone.utc),
-                        }
-                    },
-                )
-                # Extend next billing date if monthly
                 sub = await self.db.subscriptions.find_one({"_id": ObjectId(subscription_id)})
+                subscription_update = {
+                    "$set": {
+                        "status": "active",
+                        "last_payment_date": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc),
+                    },
+                    "$addToSet": {"mpesa_settled_transaction_ids": tx_id},
+                }
                 if sub and sub.get("billing_cycle") == "monthly":
-                    next_bill = datetime.now(timezone.utc) + timedelta(days=30)
-                    await self.db.subscriptions.update_one(
-                        {"_id": ObjectId(subscription_id)},
-                        {"$set": {"next_billing_date": next_bill}},
+                    subscription_update["$set"]["next_billing_date"] = (
+                        datetime.now(timezone.utc) + timedelta(days=30)
                     )
+                await self.db.subscriptions.update_one(
+                    {
+                        "_id": ObjectId(subscription_id),
+                        "mpesa_settled_transaction_ids": {"$ne": tx_id},
+                    },
+                    subscription_update,
+                )
 
             # 4. Update customer balance. Does NOT blindly reactivate the
             # customer here - a payment can settle one invoice while
@@ -284,9 +481,13 @@ class MpesaService:
             # right after this method returns) is the single source of
             # truth for whether restoration is actually warranted.
             await self.db.customers.update_one(
-                {"_id": ObjectId(customer_id)},
+                {
+                    "_id": ObjectId(customer_id),
+                    "mpesa_settled_transaction_ids": {"$ne": tx_id},
+                },
                 {
                     "$inc": {"total_paid_kes": amount},
+                    "$addToSet": {"mpesa_settled_transaction_ids": tx_id},
                     "$set": {
                         "last_payment_date": datetime.now(timezone.utc),
                         "updated_at": datetime.now(timezone.utc),
@@ -294,18 +495,18 @@ class MpesaService:
                 },
             )
 
-            # 5. Mark transaction as settled
+            # 5. Record the payment association; completion is recorded by
+            # _settle_verified_success after all settlement effects finish.
             await self.collection.update_one(
                 {"_id": ObjectId(tx_id)},
                 {
                     "$set": {
                         "payment_id": payment.id,
-                        "settled": True,
                         "updated_at": datetime.now(timezone.utc),
                     }
                 },
             )
-            logger.info(f"Transaction {tx_id} settled: Payment={payment.id}, Invoice={invoice_id}, Sub={subscription_id}")
+            logger.info("M-Pesa settlement effects applied: tx=%s", tx_id)
 
             # 6. Restore service if this payment cleared everything the
             # customer owed (checks ALL their invoices, not just this
@@ -316,18 +517,8 @@ class MpesaService:
             except Exception as restore_exc:  # noqa: BLE001
                 logger.warning(f"Post-payment restoration check failed for customer {customer_id}: {restore_exc}")
 
-        except Exception as exc:
-            logger.error(f"Settlement failed for tx {tx_id}: {exc}")
-            await self.collection.update_one(
-                {"_id": ObjectId(tx_id)},
-                {
-                    "$set": {
-                        "settled": False,
-                        "settlement_error": str(exc),
-                        "updated_at": datetime.now(timezone.utc),
-                    }
-                },
-            )
+        except Exception:
+            raise
 
     # ── HOTSPOT SELF-SERVICE PURCHASE (Phase 11) ──
     #
@@ -351,7 +542,7 @@ class MpesaService:
         now = datetime.now(timezone.utc)
         doc = {
             "transaction_type": "hotspot_purchase",
-            "merchant_request_id": None, "checkout_request_id": None,
+            "merchant_request_id": None,
             "customer_id": None, "invoice_id": None, "subscription_id": None,
             "hotspot_plan_id": plan_id, "voucher_code": None,
             "device_type": device_type, "device_mac": device_mac.replace("-", ":").upper(),
@@ -401,28 +592,18 @@ class MpesaService:
         captive portal's status-poll endpoint can hand it back."""
         try:
             from app.models.notification import NotificationType
-            from app.schemas.voucher import VoucherBatchCreate
             from app.services.notification_service import NotificationService
             from app.services.voucher_service import VoucherService
 
             plan_id = doc.get("hotspot_plan_id")
             voucher_service = VoucherService(self.db)
-            batch = await voucher_service.create_batch(
-                VoucherBatchCreate(
-                    batch_name=f"HotSpot self-service purchase ({mpesa_receipt or tx_id})",
-                    quantity=1, plan_id=plan_id, activate_on_generation=True,
-                )
+            voucher = await voucher_service.create_hotspot_purchase_voucher(
+                purchase_transaction_id=tx_id,
+                plan_id=plan_id,
+                device_mac=doc.get("device_mac", ""),
+                device_type=doc.get("device_type", ""),
             )
-            vouchers, _ = await voucher_service.list_vouchers(batch_id=batch.id, limit=1)
-            voucher_code = vouchers[0].voucher_code if vouchers else None
-            if voucher_code and doc.get("device_mac"):
-                await self.db.vouchers.update_one(
-                    {"voucher_code": voucher_code},
-                    {"$set": {
-                        "bound_mac": doc["device_mac"],
-                        "device_type": doc.get("device_type"),
-                    }},
-                )
+            voucher_code = voucher["voucher_code"]
 
             await self.collection.update_one(
                 {"_id": ObjectId(tx_id)},
@@ -434,13 +615,9 @@ class MpesaService:
                 body=f"Thank you for your payment of KES {amount:,.2f}. Your HotSpot code is {voucher_code}. Enjoy your connection!",
                 phone=phone_number, notification_type=NotificationType.VOUCHER_PURCHASED,
             )
-            logger.info(f"HotSpot purchase settled: tx={tx_id} voucher={voucher_code}")
-        except Exception as exc:  # noqa: BLE001
-            logger.error(f"HotSpot purchase settlement failed for tx {tx_id}: {exc}")
-            await self.collection.update_one(
-                {"_id": ObjectId(tx_id)},
-                {"$set": {"settled": False, "settlement_error": str(exc), "updated_at": datetime.now(timezone.utc)}},
-            )
+            logger.info("HotSpot purchase settled: transaction=%s", tx_id)
+        except Exception:
+            raise
 
     # ── QUERY & RECONCILIATION ──
 
@@ -450,35 +627,24 @@ class MpesaService:
         if not doc:
             raise NotFoundError("STK request not found")
 
-        # Call Daraja query API
-        try:
-            resp = self.daraja.query_stk_status(checkout_request_id)
-            result_code = resp.get("ResultCode")
-            result_desc = resp.get("ResultDesc", "")
+        if doc.get("callback_received"):
+            if (
+                doc.get("status") == MpesaTransactionStatus.SUCCESS.value
+                and not doc.get("settled")
+                and not doc.get("settlement_review_required")
+            ):
+                return await self._settle_verified_success(doc)
+            doc["_id"] = str(doc["_id"])
+            return MpesaTransactionInDB(**doc)
+        if doc.get("settlement_review_required"):
+            doc["_id"] = str(doc["_id"])
+            return MpesaTransactionInDB(**doc)
 
-            # If we got a definitive result, process it like a callback
-            if result_code is not None and not doc.get("callback_received"):
-                # Build synthetic callback body
-                synthetic_body = {
-                    "Body": {
-                        "stkCallback": {
-                            "CheckoutRequestID": checkout_request_id,
-                            "ResultCode": result_code,
-                            "ResultDesc": result_desc,
-                        }
-                    }
-                }
-                # Add metadata if success
-                if result_code == 0 and resp.get("CallbackMetadata"):
-                    synthetic_body["Body"]["stkCallback"]["CallbackMetadata"] = resp["CallbackMetadata"]
-
-                return await self.process_callback(synthetic_body)
-
-        except Exception as exc:
-            logger.warning(f"STK query failed for {checkout_request_id}: {exc}")
-
-        doc["_id"] = str(doc["_id"])
-        return MpesaTransactionInDB(**doc)
+        provider_result = await self._query_provider_status(checkout_request_id)
+        if provider_result is None:
+            doc["_id"] = str(doc["_id"])
+            return MpesaTransactionInDB(**doc)
+        return await self._apply_provider_result(doc, provider_result)
 
     async def reconcile_pending(self, max_age_hours: int = 24) -> List[MpesaTransactionInDB]:
         """Batch reconcile pending transactions older than N hours.
@@ -487,10 +653,36 @@ class MpesaService:
             List of transactions that were updated.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        lease_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
         cursor = self.collection.find({
-            "status": {"$in": [MpesaTransactionStatus.PENDING.value, MpesaTransactionStatus.PROCESSING.value]},
-            "created_at": {"$lte": cutoff},
-            "callback_received": False,
+            "$or": [
+                {
+                    "status": {
+                        "$in": [
+                            MpesaTransactionStatus.PENDING.value,
+                            MpesaTransactionStatus.PROCESSING.value,
+                        ]
+                    },
+                    "callback_received": False,
+                    "settlement_review_required": {"$ne": True},
+                    "$or": [
+                        {"created_at": {"$lte": cutoff}},
+                        {"callback_verification_pending": True},
+                    ],
+                },
+                {
+                    "status": MpesaTransactionStatus.SUCCESS.value,
+                    "settled": {"$ne": True},
+                    "settlement_review_required": {"$ne": True},
+                    "$or": [
+                        {"settlement_status": {"$ne": "processing"}},
+                        {
+                            "settlement_status": "processing",
+                            "settlement_started_at": {"$lte": lease_cutoff},
+                        },
+                    ],
+                },
+            ],
         })
 
         updated = []

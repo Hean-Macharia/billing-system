@@ -38,6 +38,47 @@ def _plan_to_response(p) -> dict:
     }
 
 
+async def _resolve_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOMotorDatabase) -> dict:
+    """Resolve a requested device against the configured routers' DHCP leases."""
+    import ipaddress
+
+    if not data.ip_address and not data.mac_address:
+        raise ValidationError("Provide an IP address or MAC address")
+    if data.ip_address:
+        try:
+            address = ipaddress.ip_address(data.ip_address)
+        except ValueError as exc:
+            raise ValidationError("Enter a valid device IP address") from exc
+        if not address.is_private or address.is_loopback or address.is_link_local:
+            raise ValidationError("Device lookup is limited to private LAN IP addresses")
+
+    target_ip = str(ipaddress.ip_address(data.ip_address)) if data.ip_address else None
+    target_mac = data.mac_address.replace("-", ":").upper() if data.mac_address else None
+    routers = await db.routers.find({}, {"_id": 1}).to_list(length=100)
+    service = RouterService(db)
+    failed_lookups = 0
+    for router in routers:
+        router_id = str(router["_id"])
+        try:
+            leases = await service.get_dhcp_leases(router_id)
+        except (MikroTikLegacyError, MikroTikRestError) as exc:
+            failed_lookups += 1
+            logger.warning("HotSpot device lookup failed for configured router %s: %s", router_id, exc)
+            continue
+        for lease in leases:
+            lease_ip = lease.get("address")
+            lease_mac = (lease.get("mac_address") or "").replace("-", ":").upper()
+            if (target_ip and lease_ip == target_ip) or (target_mac and lease_mac == target_mac):
+                return {
+                    "ip_address": lease_ip,
+                    "mac_address": lease_mac,
+                    "hostname": lease.get("hostname"),
+                }
+    if failed_lookups and failed_lookups == len(routers):
+        raise ServiceUnavailableError("Configured hotspot routers are currently unavailable for device verification")
+    raise NotFoundError("No matching device was found in configured router DHCP leases")
+
+
 # ── Plans ──
 
 @router.post("/plans", response_model=dict, status_code=201)
@@ -97,42 +138,8 @@ async def list_public_hotspot_plans(
 @router.post("/devices/lookup", response_model=dict)
 async def lookup_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
     """Resolve one private LAN IP or MAC against configured MikroTik DHCP leases."""
-    import ipaddress
-
-    if not data.ip_address and not data.mac_address:
-        raise ValidationError("Provide an IP address or MAC address")
-    if data.ip_address:
-        try:
-            address = ipaddress.ip_address(data.ip_address)
-        except ValueError as exc:
-            raise ValidationError("Enter a valid device IP address") from exc
-        if not address.is_private or address.is_loopback or address.is_link_local:
-            raise ValidationError("Device lookup is limited to private LAN IP addresses")
-
-    target_ip = str(ipaddress.ip_address(data.ip_address)) if data.ip_address else None
-    target_mac = data.mac_address.replace("-", ":").upper() if data.mac_address else None
-    routers = await db.routers.find({}, {"_id": 1}).to_list(length=100)
-    service = RouterService(db)
-    failed_lookups = 0
-    for router in routers:
-        router_id = str(router["_id"])
-        try:
-            leases = await service.get_dhcp_leases(router_id)
-        except (MikroTikLegacyError, MikroTikRestError) as exc:
-            failed_lookups += 1
-            logger.warning("HotSpot device lookup failed for configured router %s: %s", router_id, exc)
-            continue
-        for lease in leases:
-            lease_ip = lease.get("address")
-            lease_mac = (lease.get("mac_address") or "").replace("-", ":").upper()
-            if (target_ip and lease_ip == target_ip) or (target_mac and lease_mac == target_mac):
-                return success_response(
-                    message="Device verified",
-                    data={"ip_address": lease_ip, "mac_address": lease_mac, "hostname": lease.get("hostname")},
-                )
-    if failed_lookups and failed_lookups == len(routers):
-        raise ServiceUnavailableError("Configured hotspot routers are currently unavailable for device verification")
-    raise NotFoundError("No matching device was found in configured router DHCP leases")
+    device = await _resolve_hotspot_device(data, db)
+    return success_response(message="Device verified", data=device)
 
 
 @router.post("/purchase", response_model=dict, status_code=201)
@@ -141,13 +148,17 @@ async def purchase_hotspot_voucher(data: HotspotPurchaseRequest, db: AsyncIOMoto
     portal and pays directly - no customer account involved. Pairs with
     GET /purchase/status/{checkout_request_id} for the frontend to poll
     until the voucher is ready."""
+    verified_device = await _resolve_hotspot_device(
+        HotspotDeviceLookupRequest(mac_address=data.device_mac),
+        db,
+    )
     from app.services.mpesa_service import MpesaService
     service = MpesaService(db)
     tx = await service.initiate_hotspot_purchase(
         plan_id=data.plan_id,
         phone_number=data.phone_number,
         device_type=data.device_type,
-        device_mac=data.device_mac,
+        device_mac=verified_device["mac_address"],
     )
     return success_response(
         message="STK push sent - check your phone",

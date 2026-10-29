@@ -13,12 +13,11 @@ from fastapi import APIRouter, Depends, Response
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.dependencies import get_db, require_role
-from app.core.exceptions import AuthorizationError, ConflictError, NotFoundError, ValidationError
+from app.core.exceptions import AuthorizationError, ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
 from app.models.user import UserInDB, UserRole
 from app.schemas.mpesa import StkPushRequest
 from app.schemas.portal import PortalRegisterRequest, PortalStkPushRequest
 from app.schemas.ticket import TicketCreate, TicketReply
-from app.services.auth_service import AuthService
 from app.services.mpesa_service import MpesaService
 from app.services.portal_service import PortalService
 from app.services.ticket_service import TicketService
@@ -41,18 +40,12 @@ async def get_current_customer(
 # Self-service registration (public)
 # ==================================================================== #
 
-@router.post("/auth/register", response_model=dict, status_code=201)
-async def portal_register(data: PortalRegisterRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Activate portal access for an existing customer record. Login
-    afterwards happens via the normal POST /api/v1/auth/login."""
-    portal_service = PortalService(db)
-    user = await portal_service.register(data)
-    auth_service = AuthService(db)
-    tokens = await auth_service.create_tokens(user)
-    return success_response(
-        message="Portal account activated",
-        data={"user": {"id": user.id, "email": user.email, "full_name": user.full_name}, "tokens": tokens.model_dump()},
-        status_code=201,
+@router.post("/auth/register", status_code=503)
+async def portal_register(data: PortalRegisterRequest):
+    """Keep public activation closed until proof-of-control is available."""
+    raise ServiceUnavailableError(
+        "Portal activation is temporarily unavailable while secure verification is being set up. "
+        "Please contact support for access."
     )
 
 
