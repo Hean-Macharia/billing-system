@@ -878,6 +878,7 @@
           <h2 id="voucher-heading">Already have a voucher?</h2>
           <div class="tag">Check &amp; connect</div>
         </div>
+        <p id="router-login-notice" class="voucher-result" role="status" aria-live="polite"></p>
         <form class="voucher-login" id="voucher-login-form">
           <div>
             <label for="voucher-login-code">Enter your WiFi voucher code</label>
@@ -926,6 +927,7 @@
     <div class="footer-note">© 2026 DEVZEN CREATIONS | All Rights Reserved.</div>
   </div>
 
+  <script src="mikrotik-login.js"></script>
   <script>
     function getDefaultApiBase() {
       if (typeof window === 'undefined') return 'http://localhost:8000';
@@ -940,6 +942,7 @@
     const SUPPORT_PHONE = '+254791196121';
     const SUPPORT_EMAIL = 'heannjuki@gmail.com';
     const PORTAL_PARAMS = new URLSearchParams(window.location.search);
+    const CAPTIVE_REDIRECT = MikrotikLogin.parseRedirectParameters(window.location.search);
     const CLIENT_MAC = PORTAL_PARAMS.get('mac')
       || PORTAL_PARAMS.get('client_mac')
       || PORTAL_PARAMS.get('mac-address')
@@ -950,70 +953,24 @@
       || PORTAL_PARAMS.get('address')
       || '';
 
-    function getCaptiveLoginUrl() {
-      const rawUrl = PORTAL_PARAMS.get('login_url');
-      if (!rawUrl) return null;
-
-      try {
-        const loginUrl = new URL(rawUrl);
-        const host = loginUrl.hostname.toLowerCase();
-        const ipv4 = host.split('.').map(Number);
-        const privateIpv4 = ipv4.length === 4
-          && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-          && (
-            ipv4[0] === 10
-            || (ipv4[0] === 172 && ipv4[1] >= 16 && ipv4[1] <= 31)
-            || (ipv4[0] === 192 && ipv4[1] === 168)
-          );
-        const localDnsName = /(?:^|\.)[\w-]+\.(?:lan|local|hotspot)$/.test(host);
-        const expectedPath = loginUrl.pathname === '/login' || loginUrl.pathname === '/login/';
-
-        if (
-          !['http:', 'https:'].includes(loginUrl.protocol)
-          || loginUrl.username
-          || loginUrl.password
-          || !expectedPath
-          || !['', '80', '443'].includes(loginUrl.port)
-          || (!privateIpv4 && !localDnsName)
-          || (window.location.protocol === 'https:' && loginUrl.protocol !== 'https:')
-        ) {
-          return null;
-        }
-
-        return loginUrl.href;
-      } catch {
-        return null;
-      }
-    }
-
-    function getCaptiveDestination() {
-      const rawDestination = PORTAL_PARAMS.get('dst');
-      if (!rawDestination) return '';
-
-      try {
-        const destination = new URL(rawDestination);
-        if (!['http:', 'https:'].includes(destination.protocol)) return '';
-        return destination.href;
-      } catch {
-        return '';
-      }
-    }
-
     function voucherLoginMarkup(voucherCode) {
-      const loginUrl = getCaptiveLoginUrl();
-      if (!loginUrl) {
-        return '<p>Enter this code on the MikroTik WiFi login page to connect. If it does not appear, open a new web page to trigger it.</p>';
+      if (!CAPTIVE_REDIRECT.ok) {
+        const message = CAPTIVE_REDIRECT.message
+          || 'Voucher verified, but no MikroTik login URL was provided. Open the WiFi login page again to connect.';
+        return `<p>${escapeHtml(message)} Voucher verification does not connect you by itself.</p>`;
       }
 
-      const destination = getCaptiveDestination();
+      const submission = MikrotikLogin.createLoginSubmission(CAPTIVE_REDIRECT, voucherCode);
+      const fields = Object.entries(submission.fields)
+        .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`)
+        .join('');
       return `
-        <form action="${escapeHtml(loginUrl)}" method="post">
-          <input type="hidden" name="username" value="${escapeHtml(voucherCode)}">
-          <input type="hidden" name="password" value="${escapeHtml(voucherCode)}">
-          ${destination ? `<input type="hidden" name="dst" value="${escapeHtml(destination)}">` : ''}
+        <form action="${escapeHtml(submission.action)}" method="${submission.method}">
+          ${fields}
           <button class="btn btn-primary" type="submit">Connect to WiFi</button>
         </form>
-        <p>If automatic sign-in does not work, use the voucher code on the MikroTik WiFi login page.</p>`;
+        <p>Your voucher is verified. Internet access starts only after MikroTik accepts this login through RADIUS.</p>
+        ${CAPTIVE_REDIRECT.message ? `<p>${escapeHtml(CAPTIVE_REDIRECT.message)}</p>` : ''}`;
     }
 
     const Icons = {
@@ -1527,10 +1484,6 @@
         connect.innerHTML = voucherLoginMarkup(code);
         result.appendChild(connect);
 
-        if (!getCaptiveLoginUrl()) {
-          result.textContent =
-            'Voucher verified. Open the MikroTik WiFi login page and enter your voucher code to connect.';
-        }
       } catch (error) {
         result.textContent =
           error.message || 'Unable to verify the voucher. Please try again.';
@@ -1543,6 +1496,9 @@
     loadPlans();
     document.getElementById('check-balance').addEventListener('click', openBalanceCheck);
     document.getElementById('free-trial').addEventListener('click', openFreeTrial);
+    if (CAPTIVE_REDIRECT.state === 'invalid') {
+      document.getElementById('router-login-notice').textContent = CAPTIVE_REDIRECT.message;
+    }
     const clientIp = CLIENT_IP;
     if (clientIp) document.getElementById('client-ip').textContent = clientIp;
   </script>
