@@ -34,6 +34,20 @@ This project is designed for a Kenyan ISP serving multiple sites and supporting:
 - `radius/` - RADIUS-related configuration assets
 - `admin/` and `portal/` - admin/customer web assets
 
+## Web interfaces
+
+The static interfaces are served directly by FastAPI; no frontend build or npm install is required. Start the API with the command above, then open:
+
+- Staff console: `http://localhost:8000/admin/`
+- Customer account: `http://localhost:8000/portal/`
+- MikroTik hotspot captive portal: `http://localhost:8000/hotspot/`
+
+The staff and customer screens use the API already in this repository. Staff API paths and browser configuration live in `admin/js/api.config.js`; customer portal paths live in `portal/js/api.config.js`. Each can store an API origin in browser local storage from its sign-in page. The hotspot uses `hotspot_api_base` and retains the RouterOS redirect/CHAP login flow. For LAN preview, use the server machine's LAN IP and allow the frontend origin through the API CORS settings.
+
+Staff and customer sign-in use the existing JWT endpoints. The customer portal registration endpoint currently returns HTTP 503, so staff must create/link customer portal credentials before a customer can sign in. The backend does not implement reseller, SMS sending, churn, or expense reports; the admin screens label these unavailable rather than returning sample data.
+
+Frontend styling tokens and setup notes: `admin/README.md`. The shared red/white theme uses the `--primary`/`--surface`/`--bg` tokens in `admin/css/variables.css`; the portal imports the same theme. Third-party UI assets use Bootstrap 5.3, Bootstrap Icons, AOS, GSAP, Chart.js, and Google Fonts via CDN where applicable.
+
 ## Quick start
 
 1. Create a virtual environment.
@@ -117,6 +131,10 @@ The relay should live on the Oracle VPS, validate the token, restrict allowed Ro
 - [docs/installation.md](docs/installation.md)
 - [docs/deployment.md](docs/deployment.md)
 - [docs/mikrotik-routeros6.md](docs/mikrotik-routeros6.md)
+
+## New admin frontend
+
+The rebuilt multi-page admin interface is under `admin/` and is served at `/admin/`. See [admin/README.md](admin/README.md) for API mapping, startup instructions, current backend limitations, and the integration checklist. The frontend uses the actual endpoints implemented under `app/routes/`; it does not provide fabricated reseller or analytics APIs.
 
 ## Testing
 

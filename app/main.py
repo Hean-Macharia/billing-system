@@ -162,7 +162,11 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=settings.allowed_hosts,
+        # In development the frontend may reach this host through its private
+        # LAN address (VS Code Live Server on a phone/other workstation). The
+        # configured host names cannot enumerate DHCP addresses. Production
+        # keeps the explicit ALLOWED_HOSTS allowlist.
+        allowed_hosts=( ["*"] if settings.app_env == "development" else settings.allowed_hosts ),
     )
 
     # Exception handlers
