@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">DevZen Creations WiFi</title>
+  <desc id="desc">A red WiFi signal over a soft white and rose gradient.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#ffe8eb"/></linearGradient>
+    <linearGradient id="signal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e11d2e"/><stop offset="1" stop-color="#ff6875"/></linearGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#8f1825" flood-opacity=".13"/></filter>
+  </defs>
+  <rect width="1200" height="520" rx="34" fill="url(#backdrop)"/>
+  <circle cx="1040" cy="80" r="180" fill="#fff" opacity=".62"/>
+  <circle cx="1015" cy="435" r="145" fill="#ffd4d9" opacity=".5"/>
+  <circle cx="176" cy="453" r="125" fill="#fff" opacity=".7"/>
+  <g filter="url(#softShadow)" transform="translate(670 72)">
+    <rect width="350" height="350" rx="100" fill="url(#signal)"/>
+    <path d="M76 137c54-51 144-51 198 0M112 177c34-32 92-32 126 0M148 216c14-13 40-13 54 0" fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round"/>
+    <circle cx="175" cy="264" r="13" fill="#fff"/>
+  </g>
+  <g fill="#0f172a" font-family="Arial,Helvetica,sans-serif">
+    <text x="86" y="220" font-size="24" font-weight="700" letter-spacing="5" fill="#e11d2e">FAST, SIMPLE WIFI</text>
+    <text x="82" y="294" font-size="66" font-weight="700" letter-spacing="-3">DevZen</text>
+    <text x="310" y="294" font-size="46" font-weight="400" fill="#64748b">Creations</text>
+    <text x="88" y="350" font-size="25" fill="#64748b">Internet access. Connect in seconds.</text>
+  </g>
+</svg>

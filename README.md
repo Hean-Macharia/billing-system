@@ -34,19 +34,25 @@ This project is designed for a Kenyan ISP serving multiple sites and supporting:
 - `radius/` - RADIUS-related configuration assets
 - `admin/` and `portal/` - admin/customer web assets
 
+## Frontend entry points
+
+The current dual-app frontend is served by FastAPI at the site root. Open `/` for the public hotspot portal and `/admin-login.html` for staff. See [frontend/README.md](frontend/README.md) for the actual captive API routes and startup instructions. The compatibility pages remain available under `/hotspot/`, `/portal/`, and `/admin/`.
+
 ## Web interfaces
 
-The static interfaces are served directly by FastAPI; no frontend build or npm install is required. Start the API with the command above, then open:
+The public portal is at `/` and the staff login is at `/admin-login.html`. Root page files and public assets follow the requested multi-page structure. Staff management screens continue to use the protected `/admin/` app; top-level admin links forward there. Start the API with the command above, then open:
 
-- Staff console: `http://localhost:8000/admin/`
+- Public hotspot portal: `http://localhost:8000/`
+- Staff sign-in: `http://localhost:8000/admin-login.html`
+- Staff console: `http://localhost:8000/dashboard.html` (or `/admin/`)
 - Customer account: `http://localhost:8000/portal/`
-- MikroTik hotspot captive portal: `http://localhost:8000/hotspot/`
+- Existing MikroTik captive portal: `http://localhost:8000/hotspot/`
 
-The staff and customer screens use the API already in this repository. Staff API paths and browser configuration live in `admin/js/api.config.js`; customer portal paths live in `portal/js/api.config.js`. Each can store an API origin in browser local storage from its sign-in page. The hotspot uses `hotspot_api_base` and retains the RouterOS redirect/CHAP login flow. For LAN preview, use the server machine's LAN IP and allow the frontend origin through the API CORS settings.
+The frontend uses actual FastAPI routes discovered in this project. Public portal API constants are in `js/api.config.js`; the existing admin and customer-account apps keep their endpoint maps. The public purchase flow preserves RouterOS captive parameters and submits verified devices to the existing hotspot purchase endpoint.
 
 Staff and customer sign-in use the existing JWT endpoints. The customer portal registration endpoint currently returns HTTP 503, so staff must create/link customer portal credentials before a customer can sign in. The backend does not implement reseller, SMS sending, churn, or expense reports; the admin screens label these unavailable rather than returning sample data.
 
-Frontend styling tokens and setup notes: `admin/README.md`. The shared red/white theme uses the `--primary`/`--surface`/`--bg` tokens in `admin/css/variables.css`; the portal imports the same theme. Third-party UI assets use Bootstrap 5.3, Bootstrap Icons, AOS, GSAP, Chart.js, and Google Fonts via CDN where applicable.
+Frontend styling and API notes: `frontend/README.md`. Root design tokens are in `css/variables.css`; the existing staff console guide is `admin/README.md`. UI libraries load from CDN.
 
 ## Quick start
 
@@ -74,14 +80,15 @@ For Render hosting with MikroTik RouterOS 6, follow the [Render and FreeRADIUS s
 
 ## Default app entry points
 
-When the app is served through the production reverse proxy, the public root is the hotspot portal:
+The FastAPI root serves the public captive portal:
 
-- `/` → `/hotspot/`
+- `/` → `/index.html`
+- `/admin-login.html` → staff login
 - `/admin/` → admin console
 - `/portal/` → customer portal
 - `/api/` → FastAPI API
 
-When the backend is started directly without Nginx, the root response is the FastAPI JSON health/root payload from `app.main`, not the static hotspot landing page.
+FastAPI serves root HTML through a page allowlist and serves only the public `css/`, `js/`, and `assets/` directories from the repository root.
 
 ## Browser-side API base configuration
 

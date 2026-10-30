@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1"/>
+<title>DEVZEN CREATIONS Connect · Internet access. Connect in seconds.</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><rect width=%2224%22 height=%2224%22 rx=%226%22 fill=%22%23B91C1C%22/><path d=%22M4 9.5a14 14 0 0116 0%22 stroke=%22%23FFFFFF%22 stroke-width=%222%22 fill=%22none%22/><path d=%226 13a10 10 0 0112 0%22 stroke=%22%23FFFFFF%22 stroke-width=%222%22 fill=%22none%22/><circle cx=%2212%22 cy=%2217%22 r=%221.6%22 fill=%22%23FFFFFF%22/></svg>"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"><link rel="stylesheet" href="https://unpkg.com/aos@2.3.4/dist/aos.css"><link rel="stylesheet" href="/css/variables.css"><link rel="stylesheet" href="/css/base.css"><link rel="stylesheet" href="/css/layout.css"><link rel="stylesheet" href="/css/components.css"><link rel="stylesheet" href="/css/portal.css"><link rel="stylesheet" href="/css/animations.css"><link rel="stylesheet" href="/css/responsive.css"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet"><script src="https://unpkg.com/aos@2.3.4/dist/aos.js" defer></script><script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js" defer></script></head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 40 40" role="img" aria-label="DEVZEN CREATIONS WiFi"><rect x="1" y="1" width="38" height="38" rx="12" fill="#E11D2E"/><path d="M9 15c6.2-5.8 15.8-5.8 22 0M12.8 19c4.1-3.8 10.3-3.8 14.4 0M16.7 23c1.9-1.8 4.7-1.8 6.6 0" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round"/><circle cx="20" cy="27" r="1.7" fill="#fff"/></svg>
+        <div class="brand-text">
+          <span class="brand-name">DEVZEN CREATIONS</span>
+          <span class="brand-sub">CONNECT</span>
+        </div>
+      </div>
+      <div class="hotspot-actions"><a class="cta-mini" href="/voucher.html">Voucher</a><a class="cta-mini" href="/admin-login.html">Admin</a>
+        <span class="api-status api-status-checking" id="api-status" role="status"><i></i> Checking service</span>
+        <button class="cta-mini" id="backend-settings" type="button" title="Configure and check the billing server">M-Pesa Internet · Server</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero-card">
+        <div class="hero-copy">
+          <div class="eyebrow connect-eyebrow">HOW TO CONNECT</div>
+          <h1>Internet access.<br><em>Connect in seconds.</em></h1>
+          <p>Choose your favorite package, enter your M-PESA number, then approve the prompt on your phone. You’ll be online in seconds.</p>
+          <p class="support-hint">Have a question? Contact <a href="tel:0791196121">0791196121</a>.</p>
+
+          <div class="howto">
+            <div class="step">
+              <div class="step-no">1</div>
+              <strong>CLICK a package</strong>
+              <span>Choose the bundle that works for you.</span>
+            </div>
+            <div class="step">
+              <div class="step-no">2</div>
+              <strong>ENTER your M-PESA phone</strong>
+              <span>We’ll send a secure payment prompt to your number.</span>
+            </div>
+            <div class="step">
+              <div class="step-no">3</div>
+              <strong>ENTER your M-PESA PIN</strong>
+              <span>Approve the prompt and start browsing.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="promo-stack">
+          <div class="promo-card">
+            <div class="label">Fast checkout</div>
+            <strong>Pay securely with M-PESA</strong>
+            <span>Approve the prompt on your phone.</span>
+          </div>
+          <div class="promo-card">
+            <div class="label">Flexible access</div>
+            <strong>Short and long-term plans</strong>
+            <span>Choose from the live packages below.</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="ad-banner" aria-label="Business advertising">
+        <div>
+          <strong>Promote your business on DEVZEN CREATIONS WiFi</strong>
+          <p>Reach customers while they connect. Contact us to ask about advertising placements.</p>
+        </div>
+        <a href="/advertise.html">Advertise here</a>
+      </aside>
+
+      <section class="section" aria-labelledby="voucher-heading">
+        <div class="section-head">
+          <h2 id="voucher-heading">Already have a voucher?</h2>
+          <div class="tag">Check &amp; connect</div>
+        </div>
+        <p id="router-login-notice" class="voucher-result" role="status" aria-live="polite"></p>
+        <form class="voucher-login" id="voucher-login-form">
+          <div>
+            <label for="voucher-login-code">Enter your WiFi voucher code</label>
+            <input type="text" id="voucher-login-code" autocomplete="off" maxlength="32" required />
+          </div>
+          <button type="submit" class="btn btn-primary" id="voucher-login-submit">Verify voucher</button>
+          <p class="voucher-result" id="voucher-login-result" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Internet packages</h2>
+          <div class="tag">Live bundles</div>
+        </div>
+        <div id="plan-list" class="plan-grid"></div>
+      </section>
+
+      <div class="info-grid">
+        <section class="info-box">
+          <h3>Contact</h3>
+          <ul class="contact-list">
+            <li><a href="tel:0791196121">0791196121</a></li>
+            <li><a href="mailto:heannjuki@gmail.com">heannjuki@gmail.com</a></li>
+          </ul>
+        </section>
+
+        <section class="info-box">
+          <h3>Resources</h3>
+          <ul class="resource-list">
+            <li><a class="resource-action" href="/voucher.html">Check voucher</a></li>
+            <li><button class="resource-action" type="button" id="free-trial">Free trial</button></li>
+            <li><span>My IP: <strong id="client-ip">Not provided by hotspot</strong></span></li><li><a href="/legal.html">Privacy Policy &amp; Terms</a></li><li><a href="/advertise.html">Advertise here</a></li>
+          </ul>
+        </section>
+      </div>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Privacy Policy &amp; Terms</h2>
+        </div>
+        <p>For privacy policy or service terms, contact <a href="mailto:heannjuki@gmail.com">heannjuki@gmail.com</a>.</p>
+      </section>
+    </main>
+
+    <div class="footer-note">© 2026 DEVZEN CREATIONS | All Rights Reserved.</div>
+  </div>
+
+  <script src="/js/mikrotik-login.js"></script>
+  <script type="module" src="/js/portal.js"></script>
+<script type="module" src="/js/animations.js"></script></body>
+</html>

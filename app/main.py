@@ -2,7 +2,7 @@
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from fastapi import FastAPI, Request, status
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_request_validation_exception_handler
@@ -47,6 +47,7 @@ class SecurityHeadersMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+
             return
 
         async def send_with_headers(message):
@@ -62,11 +63,43 @@ class SecurityHeadersMiddleware:
                 ]
                 path = scope.get("path", "")
                 if not path.startswith(("/admin/", "/portal/", "/hotspot/")):
-                    extra_headers.append((b"content-security-policy", b"default-src 'self'"))
+                    extra_headers.append((
+                        b"content-security-policy",
+                        b"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com; style-src 'self' https://cdn.jsdelivr.net https://unpkg.com https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self' https: http:",
+                    ))
                 message["headers"] = headers + extra_headers
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+class PublicFrontendFiles(StaticFiles):
+    """Expose only the public frontend files when the static root is "/"."""
+
+    PAGES = {
+        "index.html", "checkout.html", "payment-status.html", "voucher.html",
+        "advertise.html", "legal.html", "admin-login.html", "dashboard.html",
+        "customers.html", "packages.html", "invoices.html", "payments.html",
+        "vouchers.html", "network.html", "tickets.html", "resellers.html",
+        "reports.html", "settings.html", "404.html",
+    }
+    IMAGE_SUFFIXES = {".svg", ".png", ".webp", ".jpg", ".jpeg", ".woff2"}
+
+    async def get_response(self, path: str, scope):
+        safe_path = PurePosixPath(path)
+        if ".." in safe_path.parts or "\\" in path or safe_path.as_posix() != path:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        if path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        allowed = (
+            path in self.PAGES
+            or path.startswith(("css/", "js/"))
+            or (path.startswith("assets/") and Path(path).suffix.lower() in self.IMAGE_SUFFIXES)
+        )
+        if not allowed:
+            response = await super().get_response("404.html", scope)
+            response.status_code = 404
+            return response
+        return await super().get_response(path, scope)
 
 
 class RequestTimingMiddleware:
@@ -297,7 +330,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", tags=["Root"])
     async def root():
-        return RedirectResponse(url="/hotspot/", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        return RedirectResponse(url="/index.html", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     @app.get("/health", tags=["Health"])
     async def health():
@@ -327,12 +360,20 @@ def create_app() -> FastAPI:
         return {"success": True, "message": "Application is ready", "data": {"status": "ready", "database": "connected"}}
 
     project_root = Path(__file__).resolve().parents[1]
-    for app_path in ("admin", "portal", "hotspot"):
+    for app_path in ("admin", "portal", "hotspot", "css", "js", "assets"):
         app.mount(
             f"/{app_path}",
             StaticFiles(directory=project_root / app_path, html=True),
             name=app_path,
         )
+
+    # Serve only the isolated frontend directory at the site root. Mounting the
+    # repository root here would expose configuration files such as .env.
+    app.mount(
+        "/",
+        PublicFrontendFiles(directory=project_root, html=True),
+        name="frontend",
+    )
 
     return app
 

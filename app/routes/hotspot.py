@@ -27,6 +27,7 @@ def _plan_to_response(p) -> dict:
         "site_id": p.site_id,
         "duration_hours": p.duration_hours,
         "data_allowance_mb": p.data_allowance_mb,
+        "max_devices": p.max_devices,
         "rate_limit": p.rate_limit,
         "price": p.price,
         "currency": p.currency,

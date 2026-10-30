@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#e11d2e">
+  <title>Connect · DEVZEN CREATIONS</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/variables.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/portal.css">
+  <link rel="stylesheet" href="/css/animations.css">
+  <link rel="stylesheet" href="/css/responsive.css">
+</head>
+<body class="checkout-body">
+  <header class="checkout-topbar">
+    <a class="brand checkout-brand" href="/index.html" aria-label="DEVZEN CREATIONS Connect home">
+      <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="12" fill="#E11D2E"/><path d="M9 15c6.2-5.8 15.8-5.8 22 0M12.8 19c4.1-3.8 10.3-3.8 14.4 0M16.7 23c1.9-1.8 4.7-1.8 6.6 0" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round"/><circle cx="20" cy="27" r="1.7" fill="#fff"/></svg>
+      <span class="checkout-wordmark"><strong>DEVZEN CREATIONS</strong><small>Connect</small></span>
+    </a>
+    <a class="back-link" href="/index.html"><i class="bi bi-arrow-left"></i> Back to packages</a>
+  </header>
+  <main class="checkout-page">
+    <div class="checkout-intro"><div class="eyebrow">FAST M-PESA CHECKOUT</div><h1>Get online in seconds.</h1><p>Choose your device, enter your number, and approve the M-PESA prompt.</p></div>
+    <div class="checkout-grid">
+      <section class="panel checkout-summary" aria-labelledby="package-title">
+        <div class="package-art"><img src="/assets/devzen-package-cover.svg" alt="DevZen Creations WiFi package illustration" loading="eager"></div>
+        <div class="eyebrow">YOUR SELECTED PACKAGE</div>
+        <div id="package-summary" aria-live="polite"><div class="loading-card">Loading package…</div></div>
+      </section>
+      <section class="panel checkout-form-panel">
+        <div class="steps" aria-label="Checkout steps"><span class="step done"><b>1</b><small>Package</small></span><span class="step active"><b>2</b><small>Device &amp; phone</small></span><span class="step"><b>3</b><small>Connect</small></span></div>
+        <h2>Complete payment</h2>
+        <p class="muted">An M-PESA STK prompt will appear on your phone.</p>
+        <form id="checkout-form" class="stack-form">
+          <label>Which device are you connecting?</label>
+          <input type="hidden" id="device-type" value="this_device">
+          <div class="device-picker" role="group" aria-label="Choose internet device">
+            <button class="device-pick active" type="button" data-device="this_device" aria-pressed="true"><i class="bi bi-phone"></i><span>THIS DEVICE</span></button>
+            <button class="device-pick" type="button" data-device="tv" aria-pressed="false"><i class="bi bi-tv"></i><span>TV</span></button>
+            <button class="device-pick" type="button" data-device="other" aria-pressed="false"><i class="bi bi-laptop"></i><span>OTHER DEVICES</span></button>
+          </div>
+          <label for="mac">MAC address of the device you selected</label>
+          <div class="inline-form"><input id="mac" class="input" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" required><button class="btn device-verify" type="button" id="verify-device">Verify</button></div>
+          <small id="device-message" class="field-help" aria-live="polite">For a TV or other device, enter that device’s MAC address and connect it to this WiFi before verifying. Purchases are locked to the verified device.</small>
+          <label for="phone">M-PESA phone number</label>
+          <div class="phone-entry"><span>+254</span><input id="phone" name="phone" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="7XX XXX XXX" maxlength="9" required></div>
+          <small class="field-help">Enter 9 digits after +254.</small>
+          <div class="notice error" id="checkout-error" hidden role="alert"></div>
+          <button class="btn btn-primary btn-block checkout-pay" id="pay-button" type="submit">Continue to payment</button>
+          <p class="checkout-secure"><i class="bi bi-shield-check"></i> Secure M-PESA checkout · Questions? <a href="tel:0791196121">0791196121</a></p>
+        </form>
+      </section>
+    </div>
+  </main>
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+  <script type="module" src="/js/checkout.js"></script>
+</body>
+</html>

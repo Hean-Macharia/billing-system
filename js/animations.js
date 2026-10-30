@@ -1,0 +1,1 @@
+if(window.AOS)AOS.init({duration:550,once:true,offset:40});if(window.gsap&&matchMedia('(prefers-reduced-motion: no-preference)').matches)gsap.from('.hero-copy > *',{y:18,opacity:0,stagger:.1,duration:.55,ease:'power2.out'});
