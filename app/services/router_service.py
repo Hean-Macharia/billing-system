@@ -346,13 +346,49 @@ class RouterService:
     # Health
     # ------------------------------------------------------------------ #
     async def refresh_health(self, router_id: str) -> Dict[str, Any]:
-        """Refresh router health metrics (legacy or REST, based on api_type)."""
+        """Refresh router health using the reachable API transport."""
         router = await self._get_raw(router_id)
-
-        if self._is_legacy(router):
-            health = await self._refresh_health_legacy(router)
-        else:
-            health = await self._refresh_health_rest(router)
+        client, api_type = await self._resolve_client(router)
+        try:
+            if api_type == RouterApiType.LEGACY.value:
+                await client.connect()
+                resource_data = await client.get_system_resource()
+                health_rows = await client.get_system_health()
+                resource = normalize_system_resource(resource_data)
+                metrics = normalize_health(health_rows)
+                health = {
+                    "reachable": True,
+                    "api_type": api_type,
+                    "cpu_load_percent": resource["cpu_load_percent"],
+                    "free_memory_bytes": resource["free_memory_bytes"],
+                    "total_memory_bytes": resource["total_memory_bytes"],
+                    "free_hdd_bytes": resource["free_hdd_bytes"],
+                    "total_hdd_bytes": resource["total_hdd_bytes"],
+                    "uptime_seconds": resource["uptime_seconds"],
+                    "board_name": resource["board_name"],
+                    "version": resource["version"],
+                    "voltage": metrics.get("voltage"),
+                    "temperature": metrics.get("temperature"),
+                }
+            else:
+                resource_data = await client.get_system_resource()
+                if isinstance(resource_data, list):
+                    resource_data = resource_data[0] if resource_data else {}
+                health = {
+                    "reachable": True,
+                    "api_type": api_type,
+                    "cpu_load_percent": resource_data.get("cpu-load"),
+                    "free_memory_bytes": resource_data.get("free-memory"),
+                    "total_memory_bytes": resource_data.get("total-memory"),
+                    "uptime_seconds": resource_data.get("uptime"),
+                    "board_name": resource_data.get("board-name"),
+                    "version": resource_data.get("version"),
+                }
+        except Exception as exc:
+            logger.warning("Router health check failed for %s: %s", router.get("ip_address"), exc)
+            health = {"reachable": False, "api_type": api_type, "error": str(exc)}
+        finally:
+            await self._close_client(client, api_type)
 
         health["checked_at"] = datetime.now(timezone.utc).isoformat()
 

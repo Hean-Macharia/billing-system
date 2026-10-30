@@ -91,10 +91,8 @@ class AuthService:
         doc["_id"] = str(doc["_id"])
         user = UserInDB(**doc)
 
-        if user.status == UserStatus.SUSPENDED:
-            raise AuthenticationError("Account is suspended. Contact administrator.")
-        if user.status == UserStatus.INACTIVE:
-            raise AuthenticationError("Account is inactive.")
+        if user.status != UserStatus.ACTIVE:
+            raise AuthenticationError("Account is not active. Contact administrator.")
 
         if user.locked_until and user.locked_until > datetime.now(timezone.utc):
             raise AuthenticationError(f"Account locked until {user.locked_until.isoformat()}")
@@ -177,6 +175,9 @@ class AuthService:
 
         doc["_id"] = str(doc["_id"])
         user = UserInDB(**doc)
+
+        if user.status != UserStatus.ACTIVE:
+            raise AuthenticationError("Account is not active. Contact administrator.")
 
         if refresh_token not in (user.refresh_tokens or []):
             raise AuthenticationError("Refresh token has been revoked")

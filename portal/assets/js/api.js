@@ -7,9 +7,12 @@
 function getDefaultBaseUrl() {
   if (typeof window === 'undefined') return 'http://localhost:8000';
   const { protocol, hostname, port } = window.location;
-  const localHosts = ['localhost', '127.0.0.1', '0.0.0.0'];
-  if (localHosts.includes(hostname) && port && port !== '8080') return 'http://localhost:8000';
+  const devServerPorts = new Set(['3000', '4173', '5173', '5500', '5501', '5502']);
   if (protocol === 'file:') return 'http://localhost:8000';
+  if (devServerPorts.has(port)) return `${protocol}//${hostname}:8000`;
+  if (['localhost', '127.0.0.1', '0.0.0.0'].includes(hostname) && port && port !== '8000') {
+    return 'http://localhost:8000';
+  }
   return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
 }
 
@@ -17,7 +20,11 @@ const DEFAULT_BASE_URL = getDefaultBaseUrl();
 
 const Api = (() => {
   function getBaseUrl() { return localStorage.getItem('isp_portal_api_base_url') || DEFAULT_BASE_URL; }
-  function setBaseUrl(url) { localStorage.setItem('isp_portal_api_base_url', url.replace(/\/$/, '')); }
+  function setBaseUrl(url) {
+    const parsed = new URL(String(url || '').trim());
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Use an http:// or https:// API address.');
+    localStorage.setItem('isp_portal_api_base_url', parsed.origin);
+  }
   function getAccessToken() { return localStorage.getItem('isp_portal_access_token'); }
   function getRefreshToken() { return localStorage.getItem('isp_portal_refresh_token'); }
   function setTokens({ access_token, refresh_token }) {
@@ -64,10 +71,15 @@ const Api = (() => {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
 
     let res;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+      res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: controller.signal });
     } catch (e) {
-      throw new ApiError(`Could not reach the server at ${getBaseUrl()}. Please try again.`, 0, null);
+      const detail = e?.name === 'AbortError' ? 'The server took too long to respond.' : 'Check that the backend is running and that this page is allowed by CORS.';
+      throw new ApiError(`${detail} API address: ${getBaseUrl()}`, 0, null);
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (res.status === 401 && !isRetry && getRefreshToken()) {
@@ -83,7 +95,7 @@ const Api = (() => {
     if (contentType.includes('application/json')) payload = await res.json().catch(() => null);
 
     if (!res.ok) {
-      const message = payload?.message || payload?.detail || `Something went wrong (${res.status})`;
+      const message = payload?.message || payload?.detail?.[0]?.msg || payload?.detail || `Something went wrong (${res.status})`;
       throw new ApiError(message, res.status, payload);
     }
     return payload;
@@ -113,8 +125,21 @@ const Api = (() => {
     return res.blob();
   }
 
+  async function testConnection() {
+    try {
+      const response = await fetch(`${getBaseUrl()}/health/ready`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new ApiError(`Backend health check returned ${response.status}`, response.status, null);
+      const payload = await response.json();
+      if (payload?.success === false) throw new ApiError(payload.message || 'Backend is not ready', response.status, payload);
+      return payload;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(`Cannot reach ${getBaseUrl()}. Check the API address, server status, and CORS settings.`, 0, null);
+    }
+  }
+
   return {
-    getBaseUrl, setBaseUrl, getAccessToken, getRefreshToken, setTokens, clearTokens, getProfile, setProfile, isAuthed,
+    getBaseUrl, setBaseUrl, testConnection, getAccessToken, getRefreshToken, setTokens, clearTokens, getProfile, setProfile, isAuthed,
     get: (p, params) => request(p, { method: 'GET', params }),
     post: (p, body) => request(p, { method: 'POST', body: body ?? {} }),
     patch: (p, body) => request(p, { method: 'PATCH', body: body ?? {} }),

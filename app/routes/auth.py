@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.dependencies import get_current_user, get_db, require_permission, require_role
+from app.core.dependencies import get_current_user, get_db, require_auth, require_permission, require_role
 from app.core.exceptions import AuthenticationError, ConflictError, ValidationError
 from app.core.logging import get_logger
 from app.models.user import Permission, UserInDB, UserRole
@@ -114,7 +114,7 @@ async def refresh(
 async def logout(
     request: Request,
     refresh_token: Optional[str] = Header(None, alias="x-refresh-token"),
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(require_auth),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Logout current user. Optionally revoke a specific refresh token."""
@@ -126,7 +126,7 @@ async def logout(
 @router.get("/me", response_model=dict)
 async def get_me(
     request: Request,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(require_auth),
 ):
     """Get current authenticated user profile."""
     return success_response(
@@ -139,7 +139,7 @@ async def get_me(
 async def update_me(
     request: Request,
     data: UserUpdate,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(require_auth),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Update current user profile."""
@@ -169,7 +169,7 @@ async def update_me(
 async def change_password(
     request: Request,
     data: PasswordChange,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(require_auth),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Change current user password."""

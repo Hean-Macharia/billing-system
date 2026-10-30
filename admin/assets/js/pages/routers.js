@@ -165,6 +165,13 @@ Pages.routers = async function (root) {
           Field.text('pppoe_server_interface', 'PPPoE interface', existing?.pppoe_server_interface || ''),
           Field.text('hotspot_interface', 'HotSpot interface', existing?.hotspot_interface || '')
         )}
+        <div class="divider"></div>
+        <div class="field-hint" style="margin-bottom:10px;">FreeRADIUS is configured separately. These values link the router record to its NAS entry.</div>
+        ${Field.row2(
+          Field.text('radius_server_ip', 'FreeRADIUS server IP', existing?.radius_server_ip || '', { placeholder: 'Reachable IP or VPN address' }),
+          Field.text('nas_client_id', 'RADIUS NAS client ID', existing?.nas_client_id || '', { placeholder: 'Optional NAS record ID' })
+        )}
+        ${Field.text('radius_secret', 'RADIUS shared secret', '', { type: 'password', hint: isEdit ? 'Leave blank to keep the stored secret' : 'Must match the FreeRADIUS client secret' })}
         ${Field.text('location', 'Physical location', existing?.location || '')}
         ${Field.textarea('notes', 'Notes', existing?.notes || '')}
       </form>`;
@@ -186,10 +193,12 @@ Pages.routers = async function (root) {
           port: raw.port ? Number(raw.port) : undefined, model_name: raw.model_name || undefined,
           use_ssl: !!raw.use_ssl, wan_interface: raw.wan_interface || undefined, lan_interface: raw.lan_interface || undefined,
           pppoe_server_interface: raw.pppoe_server_interface || undefined, hotspot_interface: raw.hotspot_interface || undefined,
+          radius_server_ip: raw.radius_server_ip || undefined, nas_client_id: raw.nas_client_id || undefined,
           location: raw.location || undefined, notes: raw.notes || undefined,
         };
         if (raw.username) payload.username = raw.username;
         if (raw.password) payload.password = raw.password;
+        if (raw.radius_secret) payload.radius_secret = raw.radius_secret;
         if (isEdit) {
           await Api.patch(`/api/v1/routers/${existing._id}`, payload);
           toast('Router updated', 'success');

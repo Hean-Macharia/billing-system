@@ -818,6 +818,28 @@
       scroll-behavior: auto !important;
     }
   }
+
+  /* Bright red and white hotspot theme, shared with the admin and customer apps. */
+  :root { --bg:#F7F8FA; --accent:#C62828; --accent-dark:#8F1D22; --accent-soft:#FCEEEF; --line:#E7E9EF; }
+  .hero-card { background:linear-gradient(135deg,#A51F23 0%,#C62828 58%,#E15A5D 100%); box-shadow:0 22px 48px -30px rgba(145,24,29,.65); animation:hotspot-enter .45s ease both; }
+  .section, .info-box, .ad-banner { border-color:#E8EAF0; box-shadow:0 10px 28px -25px rgba(15,23,42,.4); }
+  .section { animation:hotspot-enter .36s ease both; }
+  .plan-card, .promo-card { transition:transform .18s ease,box-shadow .18s ease; }
+  .plan-card:hover, .promo-card:hover { transform:translateY(-3px); box-shadow:0 16px 30px -20px rgba(100,20,25,.3); }
+  .hotspot-actions { display:flex; align-items:center; gap:10px; }
+  .api-status { display:inline-flex; align-items:center; gap:7px; border:1px solid #ECEEF2; border-radius:999px; background:#fff; color:#596170; padding:8px 11px; font-size:.72rem; font-weight:700; white-space:nowrap; }
+  .api-status i { width:7px; height:7px; border-radius:50%; background:#B5BBC5; }
+  .api-status-online { color:#177245; background:#F0FBF5; border-color:#D2F0DE; }
+  .api-status-online i { background:#20A464; box-shadow:0 0 0 3px rgba(32,164,100,.1); }
+  .api-status-offline { color:#B4232A; background:#FFF4F4; border-color:#F7D7D8; }
+  .api-status-offline i { background:#D93239; }
+  .api-status-checking i { animation:hotspot-pulse 1s ease-in-out infinite; }
+  .cta-mini { cursor:pointer; border:0; transition:transform .16s ease,filter .16s ease; }
+  .cta-mini:hover { transform:translateY(-1px); filter:brightness(.98); }
+  @keyframes hotspot-enter { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  @keyframes hotspot-pulse { 50% { opacity:.35; transform:scale(.75); } }
+  @media(max-width:560px) { .hotspot-actions { gap:6px; } .api-status { font-size:0; padding:9px; } .api-status i { width:8px; height:8px; } .cta-mini { padding:9px 10px; font-size:.68rem; } }
+  @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.001ms!important; transition-duration:.001ms!important; } }
 </style>
 </head>
 <body>
@@ -830,7 +852,10 @@
           <span class="brand-sub">CONNECT</span>
         </div>
       </div>
-      <div class="cta-mini">M-Pesa Internet</div>
+      <div class="hotspot-actions">
+        <span class="api-status api-status-checking" id="api-status" role="status"><i></i> Checking service</span>
+        <button class="cta-mini" id="backend-settings" type="button" title="Configure and check the billing server">M-Pesa Internet · Server</button>
+      </div>
     </header>
 
     <main>
@@ -941,12 +966,14 @@
       if (typeof window === 'undefined') return 'http://localhost:8000';
       const { protocol, hostname, port } = window.location;
       const localHosts = ['localhost', '127.0.0.1', '0.0.0.0'];
-      if (localHosts.includes(hostname) && port && port !== '8080') return 'http://localhost:8000';
+      const devPorts = ['3000', '4173', '5173', '5500', '5501', '5502'];
+      if (localHosts.includes(hostname) && (devPorts.includes(port) || (port && port !== '8000' && port !== '8080'))) return 'http://localhost:8000';
       if (protocol === 'file:') return 'http://localhost:8000';
+      if (devPorts.includes(port)) return `${protocol}//${hostname}:8000`;
       return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
     }
 
-    const API_BASE_URL = localStorage.getItem('hotspot_api_base') || getDefaultApiBase();
+    let API_BASE_URL = localStorage.getItem('hotspot_api_base') || getDefaultApiBase();
     const SUPPORT_PHONE = '+254791196121';
     const SUPPORT_EMAIL = 'heannjuki@gmail.com';
     const PORTAL_PARAMS = new URLSearchParams(window.location.search);
@@ -1012,13 +1039,17 @@
     async function api(path, opts = {}) {
       let res;
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
         res = await fetch(`${API_BASE_URL}${path}`, {
           method: opts.method || 'GET',
           headers: opts.body ? { 'Content-Type': 'application/json' } : {},
           body: opts.body ? JSON.stringify(opts.body) : undefined,
+          signal: controller.signal,
         });
+        clearTimeout(timeout);
       } catch (cause) {
-        const error = new Error(`Cannot reach DEVZEN CREATIONS services at ${API_BASE_URL}. Check that the app and API are running.`);
+        const error = new Error(`Cannot reach the billing API at ${API_BASE_URL}. Check that the backend is running and allows this frontend address.`);
         error.cause = cause;
         throw error;
       }
@@ -1030,6 +1061,39 @@
       }
       return body;
     }
+
+    async function checkBackend() {
+      const status = document.getElementById('api-status');
+      status.className = 'api-status api-status-checking';
+      status.innerHTML = '<i></i> Checking service';
+      try {
+        await api('/health/ready');
+        status.className = 'api-status api-status-online';
+        status.innerHTML = '<i></i> Service online';
+        status.title = `Connected to ${API_BASE_URL}`;
+        return true;
+      } catch (error) {
+        status.className = 'api-status api-status-offline';
+        status.innerHTML = '<i></i> Service offline';
+        status.title = error.message;
+        return false;
+      }
+    }
+
+    document.getElementById('backend-settings').addEventListener('click', async () => {
+      const current = API_BASE_URL;
+      const entered = window.prompt('Billing API address (for example, http://192.168.1.10:8000)', current);
+      if (entered === null) { await checkBackend(); return; }
+      try {
+        const url = new URL(entered.trim());
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Use an HTTP or HTTPS address.');
+        API_BASE_URL = url.origin;
+        localStorage.setItem('hotspot_api_base', API_BASE_URL);
+        await checkBackend();
+      } catch (error) {
+        window.alert(error.message || 'Enter a valid backend address.');
+      }
+    });
 
     function showResourceDialog(title, content) {
       document.querySelector('.sheet-overlay')?.remove();
@@ -1501,6 +1565,7 @@
       }
     });
 
+    checkBackend();
     loadPlans();
     document.getElementById('check-balance').addEventListener('click', openBalanceCheck);
     document.getElementById('free-trial').addEventListener('click', openFreeTrial);

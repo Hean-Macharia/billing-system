@@ -21,7 +21,8 @@ const Router = (() => {
         <div class="brand"><div class="mark">${Icons.wifi}</div>DEVZEN CREATIONS</div>
         <div class="topbar-right">
           <span class="topbar-name">${escapeHtml(profile?.full_name || '')}</span>
-          <button class="icon-btn" id="portal-logout" style="background:rgba(255,255,255,.1);color:#fff;" title="Sign out">${Icons.logout}</button>
+          <span class="api-status api-status-checking" id="api-status" role="status"><i></i> Connecting</span>
+          <button class="icon-btn" id="portal-logout" style="background:#FEE2E2;color:#991B1B;" title="Sign out">${Icons.logout}</button>
         </div>
       </header>
       <nav class="tabbar">${tabsHtml}</nav>
@@ -43,6 +44,15 @@ const Router = (() => {
     const root = document.getElementById('app-root');
     root.innerHTML = buildShell(base);
     document.getElementById('portal-logout').onclick = () => { Api.clearTokens(); go('#/login'); };
+    const apiStatus = document.getElementById('api-status');
+    Api.testConnection().then(() => {
+      apiStatus.className = 'api-status api-status-online';
+      apiStatus.innerHTML = '<i></i> Online';
+    }).catch(() => {
+      apiStatus.className = 'api-status api-status-offline';
+      apiStatus.innerHTML = '<i></i> Offline';
+      apiStatus.title = `Cannot reach ${Api.getBaseUrl()}`;
+    });
 
     const target = document.getElementById('page-content');
     target.innerHTML = '<div class="center-loading"><div class="spinner"></div></div>';

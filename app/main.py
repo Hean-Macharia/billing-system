@@ -145,6 +145,16 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(dict.fromkeys(cors_origins)),
+        # Live Server and local dev servers are often opened through the
+        # machine's LAN address instead of localhost. Permit only private
+        # development addresses on known frontend ports, and only in dev.
+        allow_origin_regex=(
+            r"^https?://(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|"
+            r"192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}):"
+            r"(?:3000|4173|5173|5500|5501|5502)$"
+            if settings.app_env == "development"
+            else None
+        ),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],

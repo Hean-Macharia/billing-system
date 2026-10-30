@@ -94,6 +94,7 @@ const Router = (() => {
               <h1 id="page-title">—</h1>
             </div>
             <div class="topbar-right">
+              <span class="api-status api-status-checking" id="api-status" role="status"><i></i> Connecting</span>
               <button class="icon-btn" id="menu-toggle" style="display:none;">${Icons.menu}</button>
             </div>
           </header>
@@ -129,6 +130,15 @@ const Router = (() => {
     document.getElementById('menu-toggle').onclick = () => {
       document.getElementById('sidebar')?.classList.toggle('open');
     };
+    const apiStatus = document.getElementById('api-status');
+    Api.testConnection().then(() => {
+      apiStatus.className = 'api-status api-status-online';
+      apiStatus.innerHTML = '<i></i> API online';
+    }).catch(() => {
+      apiStatus.className = 'api-status api-status-offline';
+      apiStatus.innerHTML = '<i></i> API offline';
+      apiStatus.title = `Cannot reach ${Api.getBaseUrl()}`;
+    });
 
     const matchedNav = NAV.flatMap(g => g.items).find(i => base.startsWith(i.path));
     document.getElementById('page-title').textContent = matchedNav?.label || 'Not found';

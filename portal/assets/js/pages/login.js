@@ -1,6 +1,6 @@
 Pages.login = function (root) {
   root.innerHTML = `
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(180deg,#10192F,#16213A 40%,#F6F8FC 40%);">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(180deg,#991B1B,#DC2626 40%,#F7F8FA 40%);">
       <div style="width:100%;max-width:380px;">
         <div style="display:flex;align-items:center;gap:9px;margin-bottom:22px;justify-content:center;color:#fff;">
           <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#EF4444,#991B1B);display:flex;align-items:center;justify-content:center;color:#FFFFFF;">${Icons.wifi}</div>
@@ -29,13 +29,33 @@ Pages.login = function (root) {
             <summary style="cursor:pointer;">Backend connection</summary>
             <div style="margin-top:8px;">
               <input type="text" id="api-base-input" value="${Api.getBaseUrl()}" placeholder="http://localhost:8000"/>
+              <button class="btn btn-ghost btn-sm" type="button" id="api-test" style="margin-top:8px;">Test backend connection</button>
+              <div id="api-test-result" class="field-hint" role="status" aria-live="polite" style="margin-top:6px;"></div>
             </div>
           </details>
         </div>
       </div>
     </div>`;
 
-  root.querySelector('#api-base-input').addEventListener('change', e => { Api.setBaseUrl(e.target.value.trim()); toast('Saved', 'success'); });
+  root.querySelector('#api-base-input').addEventListener('change', e => {
+    try { Api.setBaseUrl(e.target.value.trim()); e.target.value = Api.getBaseUrl(); toast('API address saved', 'success'); }
+    catch (err) { toast(err.message, 'error'); }
+  });
+  root.querySelector('#api-test').onclick = async (event) => {
+    const button = event.currentTarget;
+    const result = root.querySelector('#api-test-result');
+    try {
+      Api.setBaseUrl(root.querySelector('#api-base-input').value.trim());
+      button.disabled = true;
+      result.textContent = 'Checking backend…';
+      await Api.testConnection();
+      result.textContent = 'Backend is ready.';
+      result.style.color = '#15803D';
+    } catch (err) {
+      result.textContent = err.message || 'Backend connection failed';
+      result.style.color = '#B91C1C';
+    } finally { button.disabled = false; }
+  };
 
   root.querySelector('#login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -51,6 +71,7 @@ Pages.login = function (root) {
       Api.setProfile(me.data);
       Router.go('#/dashboard'); Router.render();
     } catch (err) {
+      Api.clearTokens();
       errBox.textContent = err.message || 'Invalid email or password';
       errBox.style.display = 'block';
     } finally { btn.disabled = false; btn.textContent = 'Sign in'; }

@@ -76,10 +76,8 @@ async def get_current_user(
     user = UserInDB(**doc)
 
     # FIX: Use UserStatus not UserRole
-    if user.status == UserStatus.SUSPENDED:
-        raise AuthenticationError("Account is suspended")
-    if user.status == UserStatus.INACTIVE:
-        raise AuthenticationError("Account is inactive")
+    if user.status != UserStatus.ACTIVE:
+        raise AuthenticationError("Account is not active")
 
     # Attach user to request state for middleware/logging
     request.state.user = user

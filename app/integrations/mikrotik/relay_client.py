@@ -51,15 +51,19 @@ class RouterRelayClient:
             return False
 
     async def get_system_identity(self) -> Dict[str, Any]:
-        return await self._request("POST", "/api/v1/router/relay", {"action": "system.identity"})
+        return self._data(await self._request("POST", "/api/v1/router/relay", {"action": "system.identity"}))
 
     async def get_system_resource(self) -> Dict[str, Any]:
-        return await self._request("POST", "/api/v1/router/relay", {"action": "system.resource"})
+        return self._data(await self._request("POST", "/api/v1/router/relay", {"action": "system.resource"}))
 
     async def get_system_health(self) -> list:
         payload = await self._request("POST", "/api/v1/router/relay", {"action": "system.health"})
-        rows = payload.get("data") if isinstance(payload, dict) else payload
+        rows = self._data(payload)
         return rows if isinstance(rows, list) else []
+
+    @staticmethod
+    def _data(payload: Any) -> Any:
+        return payload.get("data", payload) if isinstance(payload, dict) else payload
 
     async def get_interfaces(self) -> list:
         payload = await self._request("POST", "/api/v1/router/relay", {"action": "interface.list"})

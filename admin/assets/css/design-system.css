@@ -10,13 +10,13 @@
   not a separate page.
 
   Palette
-    ink       #10192F   base background (genuinely navy, not near-black)
-    panel     #16213A   sidebar / topbar surface
-    surface   #1B2A4A   raised panel surface (cards, drawer)
-    line      #2A3C63   hairline borders
-    paper     #F4F6FB   light content surface (tables sit on this, not on ink)
-    text      #E8ECF7   primary text on dark
-    muted     #93A2C4   secondary text on dark
+    ink       #FFFFFF   primary shell surface
+    panel     #FFFFFF   sidebar / topbar surface
+    surface   #F8F8FA   raised surface and hover fill
+    line      #E5E7EB   hairline borders
+    paper     #F7F8FA   light content surface
+    text      #172033   primary text
+    muted     #6B7280   secondary text
     signal    #B91C1C   primary brand accent — crimson red
     amber     #F2A93B   secondary accent — pending / warn / highland-sunset warmth
     good      #34C77A   active / online / paid
@@ -26,15 +26,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 :root {
-  --ink: #10192F;
-  --panel: #16213A;
-  --surface: #1B2A4A;
-  --surface-2: #223256;
-  --line: #2A3C63;
-  --paper: #F4F6FB;
-  --paper-line: #DFE4F0;
-  --text: #E8ECF7;
-  --muted: #93A2C4;
+  --ink: #FFFFFF;
+  --panel: #FFFFFF;
+  --surface: #F8F8FA;
+  --surface-2: #FEE2E2;
+  --line: #E5E7EB;
+  --paper: #F7F8FA;
+  --paper-line: #E5E7EB;
+  --text: #172033;
+  --muted: #6B7280;
   --signal: #B91C1C;
   --signal-ink: #FFFFFF;
   --amber: #F2A93B;
@@ -44,7 +44,7 @@
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
-  --shadow-panel: 0 20px 40px -20px rgba(6, 11, 25, 0.55);
+  --shadow-panel: 0 20px 40px -20px rgba(17, 24, 39, 0.22);
 
   font-family: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
@@ -149,8 +149,8 @@ a { color: inherit; }
 .nav-item:hover { background: var(--surface); color: var(--text); }
 .nav-item.active {
   background: var(--surface-2);
-  color: var(--text);
-  border-color: var(--line);
+  color: #991B1B;
+  border-color: #FECACA;
   box-shadow: inset 3px 0 0 var(--signal);
 }
 .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
@@ -433,4 +433,9 @@ table.data tbody tr:last-child td { border-bottom: none; }
   .sidebar.open { left: 0; }
   .stat-row { grid-template-columns: 1fr 1fr; }
   .field-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .auth-layout { grid-template-columns: 1fr !important; }
+  .auth-story { display: none !important; }
 }
