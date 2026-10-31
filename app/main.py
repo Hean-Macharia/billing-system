@@ -330,7 +330,9 @@ def create_app() -> FastAPI:
 
     @app.get("/", tags=["Root"])
     async def root():
-        return RedirectResponse(url="/index.html", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        # The RouterOS deployment guide identifies /hotspot/ as the captive
+        # entry point. The second portal remains available directly at /index.html.
+        return RedirectResponse(url="/hotspot/", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     @app.get("/health", tags=["Health"])
     async def health():

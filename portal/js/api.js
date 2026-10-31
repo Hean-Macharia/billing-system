@@ -1,8 +1,50 @@
-import{PAPI}from'./api.config.js';
-const ACCESS='dz_portal_token',REFRESH='dz_portal_refresh_token';let refreshJob=null;
-export class PortalApiError extends Error{constructor(message,status=0){super(message);this.status=status}}
-function envelope(body,status){const raw=body?.message||body?.detail||`Request failed (${status})`;return new PortalApiError(Array.isArray(raw)?raw.map(x=>x.msg||x).join(', '):String(raw),status)}
-async function send(path,{method='GET',body,params,raw=false}={}){const url=new URL(PAPI.base()+path);if(params)Object.entries(params).forEach(([k,v])=>{if(v!==undefined&&v!==null&&v!=='')url.searchParams.set(k,String(v))});const ctl=new AbortController(),timeout=setTimeout(()=>ctl.abort(),15000);try{const res=await fetch(url,{method,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(localStorage.getItem(ACCESS)?{Authorization:`Bearer ${localStorage.getItem(ACCESS)}`}:{})},body:body===undefined?undefined:JSON.stringify(body),signal:ctl.signal,cache:'no-store'});if(raw){if(!res.ok)throw envelope(await res.json().catch(()=>null),res.status);return res}const json=await res.json().catch(()=>null);if(!res.ok)throw envelope(json,res.status);return json}catch(e){if(e instanceof PortalApiError)throw e;throw new PortalApiError(e.name==='AbortError'?'The server took too long to respond.':`Cannot reach the billing API at ${PAPI.base()}. Check the address and CORS settings.`,0)}finally{clearTimeout(timeout)}}
-async function refresh(){if(refreshJob)return refreshJob;const rt=localStorage.getItem(REFRESH);if(!rt)return false;refreshJob=send(PAPI.refresh,{method:'POST',body:{refresh_token:rt}}).then(r=>{const d=r?.data||r;if(!d?.access_token)return false;localStorage.setItem(ACCESS,d.access_token);localStorage.setItem(REFRESH,d.refresh_token||rt);return true}).catch(()=>false).finally(()=>refreshJob=null);return refreshJob}
-export async function request(path,options={}){try{return await send(path,options)}catch(e){if(e.status===401&&!options.retried&&localStorage.getItem(REFRESH)&&await refresh())return request(path,{...options,retried:true});if(e.status===401){localStorage.removeItem(ACCESS);localStorage.removeItem(REFRESH);location.href='./index.html'}throw e}}
-export const portalApi={get:(p,params)=>request(p,{params}),post:(p,body)=>request(p,{method:'POST',body}),patch:(p,body)=>request(p,{method:'PATCH',body}),data:r=>r?.data??r,rows:r=>Array.isArray(r?.data)?r.data:[],receipt:async(id)=>request(`${PAPI.payments}/${id}/receipt`,{raw:true})};
+import { PAPI } from './api.config.js';
+import { createApiClient, HttpError } from '../../js/shared-api.js';
+
+const ACCESS = 'dz_portal_token';
+const REFRESH = 'dz_portal_refresh_token';
+let refreshJob = null;
+let client;
+
+export const PortalApiError = HttpError;
+export const getRefreshToken = () => localStorage.getItem(REFRESH);
+
+client = createApiClient({
+  baseUrl: PAPI.base,
+  getToken: () => localStorage.getItem(ACCESS),
+  refresh: async () => {
+    if (refreshJob) return refreshJob;
+    const refreshToken = localStorage.getItem(REFRESH);
+    if (!refreshToken) return false;
+    refreshJob = client.request(PAPI.refresh, {
+      method: 'POST', body: { refresh_token: refreshToken }, auth: false, timeoutMs: 12000,
+    }).then((response) => {
+      const data = response?.data ?? response;
+      if (!data?.access_token) return false;
+      localStorage.setItem(ACCESS, data.access_token);
+      localStorage.setItem(REFRESH, data.refresh_token || refreshToken);
+      return true;
+    }).catch(() => false).finally(() => { refreshJob = null; });
+    return refreshJob;
+  },
+  onUnauthorized: () => {
+    localStorage.removeItem(ACCESS);
+    localStorage.removeItem(REFRESH);
+    localStorage.removeItem('dz_portal_profile');
+    location.replace('./index.html');
+  },
+});
+
+export const request = (path, options = {}) => client.request(path, {
+  ...options,
+  responseType: options.raw ? 'response' : options.responseType,
+});
+
+export const portalApi = {
+  get: (path, params, options = {}) => request(path, { ...options, params }),
+  post: (path, body, options = {}) => request(path, { ...options, method: 'POST', body }),
+  patch: (path, body, options = {}) => request(path, { ...options, method: 'PATCH', body }),
+  data: (response) => response?.data ?? response,
+  rows: (response) => Array.isArray(response?.data) ? response.data : [],
+  receipt: (id) => request(`${PAPI.payments}/${encodeURIComponent(id)}/receipt`, { raw: true }),
+};

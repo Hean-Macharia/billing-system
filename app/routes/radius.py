@@ -30,6 +30,7 @@ def _nas_to_response(nas) -> dict:
         "name": nas.name,
         "site_id": nas.site_id,
         "ip_address": nas.ip_address,
+        "nas_identifier": nas.nas_identifier,
         "description": nas.description,
         "location": nas.location,
         "nas_type": nas.nas_type.value,

@@ -23,6 +23,18 @@ function getDefaultApiBase() {
       || PORTAL_PARAMS.get('client_ip')
       || PORTAL_PARAMS.get('address')
       || '';
+    const HOTSPOT_CONTEXT_KEY = 'dz_hotspot_context';
+
+    function saveHotspotContext(value) {
+      try {
+        if (value) sessionStorage.setItem(HOTSPOT_CONTEXT_KEY, value);
+        else sessionStorage.removeItem(HOTSPOT_CONTEXT_KEY);
+      } catch {}
+    }
+
+    function readHotspotContext() {
+      try { return sessionStorage.getItem(HOTSPOT_CONTEXT_KEY) || ''; } catch { return ''; }
+    }
 
     function voucherLoginMarkup(voucherCode) {
       if (!CAPTIVE_REDIRECT.ok) {
@@ -79,7 +91,10 @@ function getDefaultApiBase() {
         const timeout = setTimeout(() => controller.abort(), 15000);
         res = await fetch(`${API_BASE_URL}${path}`, {
           method: opts.method || 'GET',
-          headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+          headers: {
+            ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+            ...(opts.headers || {}),
+          },
           body: opts.body ? JSON.stringify(opts.body) : undefined,
           signal: controller.signal,
         });
@@ -96,6 +111,36 @@ function getDefaultApiBase() {
         throw error;
       }
       return body;
+    }
+
+    async function attestCurrentHotspotDevice() {
+      const status = document.getElementById('device-identification-status');
+      if (!CLIENT_IP || !CLIENT_MAC) {
+        saveHotspotContext('');
+        status.textContent = 'Device verification is unavailable because the hotspot did not provide both device identifiers. Reconnect to the DevZen Wi-Fi sign-in page and try again. Global packages may still be shown.';
+        status.dataset.state = 'failed';
+        return '';
+      }
+      status.textContent = 'Verifying this device with the DevZen billing service…';
+      status.dataset.state = 'verifying';
+      try {
+        const result = await api('/api/v1/hotspot/devices/attest', {
+          method: 'POST',
+          body: { ip_address: CLIENT_IP, mac_address: CLIENT_MAC },
+        });
+        const token = result?.data?.context_token || '';
+        saveHotspotContext(token);
+        status.textContent = token
+          ? 'Device verified. Packages available for this Wi-Fi site are being loaded.'
+          : 'The billing service did not return a trusted device context. Only global packages can be shown.';
+        status.dataset.state = token ? 'verified' : 'failed';
+        return token;
+      } catch (error) {
+        saveHotspotContext('');
+        status.textContent = `Device verification could not be completed: ${error.message}. The portal will show only packages the backend allows without a trusted site context.`;
+        status.dataset.state = 'failed';
+        return '';
+      }
     }
 
     async function checkBackend() {
@@ -152,13 +197,13 @@ function getDefaultApiBase() {
     }
 
     function openBalanceCheck() {
-      const overlay = showResourceDialog('Check voucher balance', `
-        <p>Enter your DEVZEN CREATIONS WiFi voucher code to check whether it is active.</p>
+      const overlay = showResourceDialog('Check voucher status', `
+        <p>Check whether your DEVZEN CREATIONS WiFi voucher is active and view its expiry. Remaining balance is not available through this API.</p>
         <form id="balance-form">
           <label for="voucher-code">Voucher code</label>
           <input type="text" id="voucher-code" name="voucher_code" autocomplete="off" required maxlength="32" />
           <div class="error-text" id="balance-result" role="status"></div>
-          <button type="submit" class="btn btn-primary" id="balance-submit">Check balance</button>
+          <button type="submit" class="btn btn-primary" id="balance-submit">Check status</button>
         </form>`);
       const result = overlay.querySelector('#balance-result');
       overlay.querySelector('#balance-form').addEventListener('submit', async (event) => {
@@ -174,7 +219,7 @@ function getDefaultApiBase() {
           const expiry = voucher.expiry_date ? new Date(voucher.expiry_date).toLocaleString() : 'Not specified';
           const allowance = voucher.data_allowance_mb == null ? 'Unlimited data' : `${voucher.data_allowance_mb} MB`;
           result.textContent = voucher.valid
-            ? `Voucher is active. ${voucher.duration_hours ?? '—'} hours, ${allowance}. Expires: ${expiry}.`
+            ? `${voucher.status === 'used' ? 'Voucher is ready for a paired device.' : 'Voucher is active.'} ${voucher.duration_hours ?? '—'} hours, ${allowance}. Devices: up to ${voucher.max_devices ?? 1}. Expires: ${expiry}.`
             : (voucher.reason || 'This voucher is not active.');
           result.style.display = 'block';
         } catch (error) {
@@ -182,14 +227,14 @@ function getDefaultApiBase() {
           result.style.display = 'block';
         } finally {
           submit.disabled = false;
-          submit.textContent = 'Check balance';
+          submit.textContent = 'Check status';
         }
       });
       overlay.querySelector('#voucher-code').focus();
     }
 
     function openFreeTrial() {
-      if (!CLIENT_MAC) {
+      if (!CLIENT_MAC && !CLIENT_IP) {
         showResourceDialog('Free trial access', `
           <p>This three-minute trial is issued once per device. Open this page from the DEVZEN CREATIONS MikroTik captive portal so it can provide your device MAC address.</p>
           <p>If the hotspot opened this page but the device could not be identified, contact support:</p>
@@ -212,7 +257,7 @@ function getDefaultApiBase() {
         try {
           const response = await api('/api/v1/hotspot/free-trial', {
             method: 'POST',
-            body: { client_mac: CLIENT_MAC }
+            body: { ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {}), ...(CLIENT_MAC ? { client_mac: CLIENT_MAC } : {}) }
           });
           const trial = response.data;
           overlay.querySelector('#trial-content').innerHTML = `
@@ -233,12 +278,6 @@ function getDefaultApiBase() {
       });
     }
 
-    function getPlanAccentLabel(plan) {
-      if (plan.price <= 20) return 'Hot Deal';
-      if (plan.price >= 100) return 'Best Value';
-      return 'Popular';
-    }
-
     function formatDataAllowance(plan) {
       if (plan.data_allowance_mb == null) return 'Unlimited data';
       const mb = Number(plan.data_allowance_mb);
@@ -247,19 +286,17 @@ function getDefaultApiBase() {
       return bonus ? `${cap} · ${bonus[0]}` : cap;
     }
 
-    function getPlanClass(plan) {
-      if (plan.price <= 20) return 'featured';
-      if (plan.price >= 100) return 'popular';
-      return '';
-    }
-
     async function loadPlans() {
       const listEl = document.getElementById('plan-list');
+      listEl.setAttribute('aria-busy', 'true');
       try {
+        const contextToken = await attestCurrentHotspotDevice();
         let res;
         for (let attempt = 0; ; attempt += 1) {
           try {
-            res = await api('/api/v1/hotspot/plans/public');
+            res = await api('/api/v1/hotspot/plans/public', {
+              headers: contextToken ? { 'X-Hotspot-Context': contextToken } : {},
+            });
             break;
           } catch (error) {
             const canRetry = [502, 503, 504].includes(error.status) && attempt < 2;
@@ -276,19 +313,18 @@ function getDefaultApiBase() {
 
         listEl.innerHTML = plans.map((plan, index) => {
           const title = plan.name || plan.description || 'Internet bundle';
-          const cardClass = getPlanClass(plan);
-          const label = getPlanAccentLabel(plan);
           const duration = fmtDuration(Number(plan.duration_hours || 1));
-          const rate = plan.rate_limit || 'Up to 10 Mbps';
+          const rate = plan.rate_limit || 'Speed not specified';
           const devices = plan.max_devices || 1;
+          const price = new Intl.NumberFormat('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(plan.price || 0));
           return `
-            <article class="plan-card ${cardClass}" data-plan-index="${index}" tabindex="0" role="button" aria-label="Select ${escapeHtml(title)}">
+            <article class="plan-card" data-plan-index="${index}" tabindex="0" role="button" aria-label="Select ${escapeHtml(title)}">
               <div class="pack-visual">
                 <div class="signal">${Icons.wifi}</div>
               </div>
               <div class="plan-body">
                 <div class="plan-meta">
-                  <span>${label}</span>
+                  <span>Internet access</span>
                   <span>${duration}</span>
                 </div>
                 <h3>${escapeHtml(title)}</h3>
@@ -296,7 +332,7 @@ function getDefaultApiBase() {
                 <div class="sub">${escapeHtml(rate)} · Up to ${devices} device${devices > 1 ? 's' : ''}</div>
                 ${plan.description ? `<div class="sub">${escapeHtml(plan.description)}</div>` : ''}
                 <div class="plan-footer">
-                  <div class="plan-price">KES ${Number(plan.price || 0).toFixed(0)}<small>/</small></div>
+                  <div class="plan-price">${escapeHtml(plan.currency || 'KES')} ${price}</div>
                   <span class="plan-btn">View package</span>
                 </div>
               </div>
@@ -314,8 +350,10 @@ function getDefaultApiBase() {
             }
           });
         });
+        listEl.setAttribute('aria-busy', 'false');
       } catch (error) {
         listEl.innerHTML = `<div class="error-box">Couldn't load packages right now. ${escapeHtml(error.message)}<button type="button" id="retry-plans">Try again</button></div>`;
+        listEl.setAttribute('aria-busy', 'false');
         listEl.querySelector('#retry-plans').addEventListener('click', loadPlans);
       }
     }
@@ -324,6 +362,7 @@ function getDefaultApiBase() {
       const overlay = document.createElement('div');
       overlay.className = 'sheet-overlay';
       const devices = Number(plan.max_devices || 1);
+      const price = new Intl.NumberFormat('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(plan.price || 0));
       overlay.innerHTML = `
         <div class="sheet">
           <div class="sheet-header">
@@ -344,22 +383,19 @@ function getDefaultApiBase() {
             ${plan.description ? `<p>${escapeHtml(plan.description)}</p>` : ''}
             <div class="price-box">
               <span>You are paying for:</span>
-              <strong>KES ${Number(plan.price || 0).toFixed(0)}</strong>
+              <strong>${escapeHtml(plan.currency || 'KES')} ${price}</strong>
             </div>
             <form id="buy-form">
               <label>Who are you buying access for?</label>
-              <div class="device-options" role="group" aria-label="Purchase device">
-                <button class="device-choice" type="button" data-device="this_device" aria-pressed="true">This device</button>
-                <button class="device-choice" type="button" data-device="tv" aria-pressed="false">TV</button>
-                <button class="device-choice" type="button" data-device="other" aria-pressed="false">Other device</button>
-              </div>
+              <div class="device-options" aria-label="Purchase device"><strong>This device</strong><span>Device details are read automatically from the MikroTik sign-in context.</span></div>
+              <p class="hint">Connecting a TV or another device requires a secure pairing feature that is not available yet.</p>
               <div id="target-device-fields"></div>
               <div id="device-status" class="device-status" role="status" aria-live="polite"></div>
               <label for="phone-input">M-Pesa number</label>
               <input type="tel" id="phone-input" inputmode="numeric" placeholder="0712345678" required />
               <div class="hint">We will send an STK push to this number.</div>
               <div class="error-text" id="buy-error"></div>
-              <button type="submit" class="btn btn-primary" id="buy-submit">Complete payment · KES ${Number(plan.price || 0).toFixed(0)}</button>
+              <button type="submit" class="btn btn-primary" id="buy-submit">Complete payment · ${escapeHtml(plan.currency || 'KES')} ${price}</button>
               <button type="button" class="btn btn-ghost" id="cancel-btn">Cancel</button>
             </form>
           </div>
@@ -373,69 +409,66 @@ function getDefaultApiBase() {
 
       let selectedDevice = 'this_device';
       let verifiedMac = '';
+      let verifiedDevice = null;
+      let deviceLookupSequence = 0;
       const targetFields = overlay.querySelector('#target-device-fields');
       const deviceStatus = overlay.querySelector('#device-status');
       const normalizeMac = (mac) => String(mac || '').replace(/-/g, ':').toUpperCase();
-      const setVerified = (mac) => {
-        verifiedMac = normalizeMac(mac);
-        deviceStatus.textContent = 'Device verified';
+      const setVerified = (device) => {
+        if (device?.verification_status !== 'verified' || !device.mac_address || !device.router_id) {
+          throw new Error('The router did not return a complete DHCP verification result.');
+        }
+        verifiedDevice = device;
+        verifiedMac = normalizeMac(device.mac_address);
+        deviceStatus.textContent = `Device verified on ${device.router_name || 'the hotspot'}${device.site_id ? ` · site ${device.site_id}` : ''}.`;
         deviceStatus.dataset.verified = 'true';
+        deviceStatus.dataset.state = 'verified';
       };
       const verifyByLookup = async (payload) => {
-        deviceStatus.textContent = '';
+        const sequence = ++deviceLookupSequence;
+        verifiedDevice = null;
+        deviceStatus.textContent = 'Verifying device against the MikroTik DHCP lease…';
         deviceStatus.dataset.verified = 'false';
+        deviceStatus.dataset.state = 'verifying';
         try {
           const response = await api('/api/v1/hotspot/devices/lookup', { method: 'POST', body: payload });
-          setVerified(response.data.mac_address);
+          if (sequence !== deviceLookupSequence) return;
+          setVerified(response.data);
         } catch (error) {
+          if (sequence !== deviceLookupSequence) return;
           verifiedMac = '';
-          deviceStatus.textContent = error.message;
+          verifiedDevice = null;
+          deviceStatus.textContent = `Device verification failed: ${error.message}`;
+          deviceStatus.dataset.state = 'failed';
         }
       };
       const renderDeviceFields = () => {
+        deviceLookupSequence += 1;
         verifiedMac = '';
+        verifiedDevice = null;
         deviceStatus.dataset.verified = 'false';
-        if (selectedDevice === 'this_device') {
-          if (CLIENT_MAC) {
-            setVerified(CLIENT_MAC);
-          } else {
-            targetFields.replaceChildren();
-            if (CLIENT_IP) {
-              verifyByLookup({ ip_address: CLIENT_IP });
-            } else {
-              deviceStatus.textContent = 'Device could not be identified automatically.';
-            }
-          }
-        } else if (selectedDevice === 'tv') {
-          targetFields.innerHTML = '<label for="target-device-id">TV MAC address</label><div class="input-with-action"><input type="text" id="target-device-id" placeholder="TV MAC address" required/><button type="button" id="verify-device">Verify</button></div>';
-          targetFields.querySelector('#verify-device').onclick = () => {
-            const value = targetFields.querySelector('#target-device-id').value.trim();
-            verifyByLookup({ mac_address: value });
-          };
+        deviceStatus.dataset.state = 'identifying';
+        deviceStatus.textContent = 'Identifying this device from the MikroTik captive redirect…';
+        if (CLIENT_MAC) {
+          verifyByLookup({ ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {}), mac_address: CLIENT_MAC });
+        } else if (CLIENT_IP) {
+          verifyByLookup({ ip_address: CLIENT_IP });
         } else {
-          targetFields.innerHTML = '<label for="target-device-id">Device MAC address</label><div class="input-with-action"><input type="text" id="target-device-id" placeholder="Device MAC address" required/><button type="button" id="verify-device">Verify</button></div>';
-          targetFields.querySelector('#verify-device').onclick = () => {
-            const value = targetFields.querySelector('#target-device-id').value.trim();
-            verifyByLookup({ mac_address: value });
-          };
+          targetFields.replaceChildren();
+          deviceStatus.textContent = 'Device verification failed: reconnect through the DevZen Wi-Fi sign-in page so MikroTik can provide this device’s address.';
+          deviceStatus.dataset.state = 'failed';
         }
         targetFields.querySelectorAll('input').forEach((input) => {
           input.addEventListener('input', () => {
+            deviceLookupSequence += 1;
             verifiedMac = '';
+            verifiedDevice = null;
             deviceStatus.dataset.verified = 'false';
+            deviceStatus.dataset.state = 'identifying';
             deviceStatus.textContent = '';
           });
         });
       };
-      overlay.querySelectorAll('[data-device]').forEach((choice) => {
-        choice.addEventListener('click', () => {
-          selectedDevice = choice.dataset.device;
-          overlay.querySelectorAll('[data-device]').forEach((button) => {
-            button.setAttribute('aria-pressed', String(button === choice));
-          });
-          renderDeviceFields();
-        });
-      });
       renderDeviceFields();
 
       overlay.querySelector('#buy-form').addEventListener('submit', async (event) => {
@@ -471,8 +504,10 @@ function getDefaultApiBase() {
               plan_id: plan._id,
               phone_number: phone,
               device_type: selectedDevice,
-              device_mac: verifiedMac
-            }
+              device_mac: verifiedMac,
+              ...(verifiedDevice?.ip_address ? { ip_address: verifiedDevice.ip_address } : {})
+            },
+            headers: readHotspotContext() ? { 'X-Hotspot-Context': readHotspotContext() } : {},
           });
           showWaitingScreen(overlay, res.data.checkout_request_id);
         } catch (error) {

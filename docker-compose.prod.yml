@@ -81,6 +81,9 @@ services:
       - ./admin:/usr/share/nginx/html/admin:ro
       - ./portal:/usr/share/nginx/html/portal:ro
       - ./hotspot:/usr/share/nginx/html/hotspot:ro
+      - ./css:/usr/share/nginx/html/css:ro
+      - ./js:/usr/share/nginx/html/js:ro
+      - ./assets:/usr/share/nginx/html/assets:ro
       - ./docker/nginx/certs:/etc/nginx/certs:ro
 
 volumes:

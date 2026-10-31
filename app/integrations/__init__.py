@@ -1,3 +1,4 @@
-"""app/integrations/__init__.py"""
-from .mpesa import daraja_client
-from .mikrotik import mikrotik_client
+"""External integrations, imported explicitly by the service that needs them.
+
+Do not import payment and router integrations together at package import time.
+"""

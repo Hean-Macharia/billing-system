@@ -21,6 +21,7 @@ class NasClient(BaseModel):
     name: str
     site_id: Optional[str] = None
     ip_address: str  # NAS IP that FreeRADIUS sees
+    nas_identifier: Optional[str] = None  # Exact NAS-Identifier sent by FreeRADIUS
     secret: str  # RADIUS shared secret (never returned in API)
     description: Optional[str] = None
     location: Optional[str] = None
@@ -85,6 +86,8 @@ class RadiusAccounting(BaseModel):
     username: str
     realm: Optional[str] = None
     nas_ip_address: str
+    nas_identifier: Optional[str] = None
+    router_id: Optional[str] = None
     nas_port_id: Optional[str] = None
     nas_port_type: Optional[str] = None
     acct_start_time: Optional[datetime] = None
@@ -115,6 +118,7 @@ class RadiusAccounting(BaseModel):
     customer_id: Optional[str] = None
     subscription_id: Optional[str] = None
     site_id: Optional[str] = None
+    router_id: Optional[str] = None
     voucher_id: Optional[str] = None
     package_id: Optional[str] = None
 
@@ -130,6 +134,8 @@ class RadiusSession(BaseModel):
     acct_session_id: str
     username: str
     nas_ip_address: str
+    nas_identifier: Optional[str] = None
+    router_id: Optional[str] = None
     nas_port_id: Optional[str] = None
     framed_ip_address: Optional[str] = None
     calling_station_id: Optional[str] = None

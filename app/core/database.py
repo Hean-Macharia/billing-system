@@ -31,6 +31,8 @@ COLLECTIONS = [
     "sites",
     "routers",
     "mpesa_transactions",   # ✅ added here
+    "router_attestation_nonces",
+    "hotspot_trusted_contexts",
 ]
 
 # Indexes to create upfront for performance
@@ -117,6 +119,8 @@ INDEXES = {
     "radius_sessions": [
         {"keys": [("username", 1)]},
         {"keys": [("nas_ip_address", 1)]},
+        {"keys": [("site_id", 1), ("status", 1)]},
+        {"keys": [("router_id", 1), ("status", 1)]},
         {"keys": [("start_time", -1)]},
         {"keys": [("status", 1)]},
         {"keys": [("customer_id", 1)]},
@@ -137,6 +141,7 @@ INDEXES = {
         {"keys": [("name", 1)], "unique": True},
         {"keys": [("ip_address", 1)], "unique": True},
         {"keys": [("site_id", 1)]},
+        {"keys": [("nas_client_id", 1)]},
         {"keys": [("status", 1)]},
     ],
     # ✅ M-Pesa transactions
@@ -147,9 +152,19 @@ INDEXES = {
         {"keys": [("status", 1)]},
         {"keys": [("created_at", -1)]},
     ],
+    "router_attestation_nonces": [
+        {"keys": [("nonce", 1)], "unique": True},
+        {"keys": [("expires_at", 1)], "expireAfterSeconds": 0},
+    ],
+    "hotspot_trusted_contexts": [
+        {"keys": [("token_hash", 1)], "unique": True},
+        {"keys": [("expires_at", 1)], "expireAfterSeconds": 0},
+        {"keys": [("site_id", 1), ("expires_at", 1)]},
+    ],
     # ✅ RADIUS collections
     "nas_clients": [
         {"keys": [("ip_address", 1)], "unique": True},
+        {"keys": [("nas_identifier", 1)]},
         {"keys": [("site_id", 1)]},
     ],
     "radius_users": [
@@ -161,6 +176,8 @@ INDEXES = {
         {"keys": [("acct_session_id", 1)]},
         {"keys": [("username", 1)]},
         {"keys": [("nas_ip_address", 1)]},
+        {"keys": [("site_id", 1), ("acct_start_time", -1)]},
+        {"keys": [("router_id", 1), ("acct_start_time", -1)]},
         {"keys": [("voucher_id", 1)]},
     ],
 }

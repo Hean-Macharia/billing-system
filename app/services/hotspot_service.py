@@ -54,6 +54,8 @@ class HotspotService:
             "activated_at": now,
             "used_at": None,
             "trial_mac": normalized_mac,
+            "authorized_macs": [normalized_mac],
+            "available_device_slots": 0,
             "is_free_trial": True,
             "created_at": now,
             "updated_at": now,
@@ -99,9 +101,19 @@ class HotspotService:
         doc["_id"] = str(doc["_id"])
         return HotspotPlan(**doc)
 
-    async def list_plans(self, site_id: Optional[str] = None, active_only: bool = False):
+    async def list_plans(
+        self,
+        site_id: Optional[str] = None,
+        active_only: bool = False,
+        include_global: bool = False,
+        global_only: bool = False,
+    ):
         query = {}
-        if site_id:
+        if global_only:
+            query["site_id"] = None
+        elif site_id and include_global:
+            query["$or"] = [{"site_id": site_id}, {"site_id": None}]
+        elif site_id:
             query["site_id"] = site_id
         if active_only:
             query["is_active"] = True

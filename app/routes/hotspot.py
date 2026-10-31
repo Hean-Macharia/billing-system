@@ -1,17 +1,21 @@
 """HotSpot plan (profile) API routes."""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request, Response
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.dependencies import get_db, require_permission
-from app.core.exceptions import NotFoundError, ServiceUnavailableError, ValidationError
+from app.core.exceptions import APIException, ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
 from app.core.logging import get_logger
-from app.integrations.mikrotik.legacy_client import MikroTikLegacyError
-from app.integrations.mikrotik.rest_client import MikroTikRestError
 from app.models.user import Permission, UserInDB
 from app.schemas.hotspot import HotspotPlanCreate, HotspotPlanUpdate
-from app.schemas.portal import HotspotDeviceLookupRequest, HotspotPurchaseRequest, HotspotTrialRequest
+from app.schemas.portal import (
+    HotspotDeviceAttestationRequest,
+    HotspotDeviceLookupRequest,
+    HotspotPurchaseRequest,
+    HotspotTrialRequest,
+)
+from app.services.hotspot_attestation_service import HotspotAttestationService
 from app.services.hotspot_service import HotspotService
 from app.services.router_service import RouterService
 from app.utils.helpers import success_response
@@ -40,7 +44,7 @@ def _plan_to_response(p) -> dict:
 
 
 async def _resolve_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOMotorDatabase) -> dict:
-    """Resolve a requested device against the configured routers' DHCP leases."""
+    """Verify all supplied client identifiers against one unique live DHCP lease."""
     import ipaddress
 
     if not data.ip_address and not data.mac_address:
@@ -55,29 +59,70 @@ async def _resolve_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOM
 
     target_ip = str(ipaddress.ip_address(data.ip_address)) if data.ip_address else None
     target_mac = data.mac_address.replace("-", ":").upper() if data.mac_address else None
-    routers = await db.routers.find({}, {"_id": 1}).to_list(length=100)
+    routers = await db.routers.find(
+        {"status": {"$ne": "disabled"}},
+        {"_id": 1, "name": 1, "site_id": 1},
+    ).to_list(length=1000)
+    if not routers:
+        raise ServiceUnavailableError("No MikroTik routers are configured for device verification")
+
     service = RouterService(db)
-    failed_lookups = 0
+    unavailable_routers = []
+    matches = []
+    expired_matches = []
     for router in routers:
         router_id = str(router["_id"])
         try:
             leases = await service.get_dhcp_leases(router_id)
-        except (MikroTikLegacyError, MikroTikRestError) as exc:
-            failed_lookups += 1
-            logger.warning("HotSpot device lookup failed for configured router %s: %s", router_id, exc)
+        except Exception as exc:
+            unavailable_routers.append(router_id)
+            logger.warning(
+                "HotSpot DHCP lease lookup failed for router %s (%s)",
+                router_id,
+                type(exc).__name__,
+            )
             continue
         for lease in leases:
-            lease_ip = lease.get("address")
+            lease_ip = str(lease.get("address") or "")
             lease_mac = (lease.get("mac_address") or "").replace("-", ":").upper()
-            if (target_ip and lease_ip == target_ip) or (target_mac and lease_mac == target_mac):
-                return {
+            if not lease_ip or not lease_mac:
+                continue
+            if target_ip and lease_ip != target_ip:
+                continue
+            if target_mac and lease_mac != target_mac:
+                continue
+
+            lease_status = str(lease.get("status") or "").lower()
+            expires_seconds = lease.get("expires_seconds")
+            expired = (lease_status and lease_status != "bound") or (
+                expires_seconds is not None and expires_seconds <= 0
+            )
+            result = {
+                    "verification_status": "verified",
+                    "verification_method": "router_dhcp_lease",
                     "ip_address": lease_ip,
                     "mac_address": lease_mac,
                     "hostname": lease.get("hostname"),
+                    "lease_status": lease_status or None,
+                    "lease_expires_in_seconds": expires_seconds,
+                    "router_id": router_id,
+                    "router_name": router.get("name"),
+                    "site_id": router.get("site_id"),
                 }
-    if failed_lookups and failed_lookups == len(routers):
-        raise ServiceUnavailableError("Configured hotspot routers are currently unavailable for device verification")
-    raise NotFoundError("No matching device was found in configured router DHCP leases")
+            (expired_matches if expired else matches).append(result)
+
+    # A partial scan cannot establish uniqueness across sites or overlapping LANs.
+    if unavailable_routers:
+        raise ServiceUnavailableError(
+            "Device verification is temporarily unavailable because one or more configured routers could not be checked"
+        )
+    if len(matches) > 1 or (matches and expired_matches):
+        raise ConflictError("This device matches DHCP leases on multiple routers; ask support to resolve the site assignment")
+    if matches:
+        return matches[0]
+    if expired_matches:
+        raise ConflictError("The matching MikroTik DHCP lease is no longer active. Reconnect to Wi-Fi and try again")
+    raise NotFoundError("No DHCP lease matched the supplied hotspot device details")
 
 
 # ── Plans ──
@@ -110,18 +155,31 @@ async def list_hotspot_plans(
 @router.get("/plans/public", response_model=dict)
 async def list_public_hotspot_plans(
     request: Request,
+    response: Response,
     site_id: Optional[str] = None,
+    hotspot_context: Optional[str] = Header(default=None, alias="X-Hotspot-Context"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """No-auth listing of active plans - what a captive-portal splash page
-    shows a guest before they buy/redeem a voucher."""
+    """Serve global plans, plus plans for a valid short-lived router context.
+
+    ``site_id`` remains accepted for compatibility but is never trusted.
+    """
     service = HotspotService(db)
-    plans = await service.list_plans(site_id=site_id, active_only=True)
+    context = await HotspotAttestationService(db).get_context(hotspot_context)
+    if hotspot_context:
+        response.headers["Cache-Control"] = "private, no-store"
+    plans = await service.list_plans(
+        site_id=context.site_id if context else None,
+        active_only=True,
+        include_global=bool(context),
+        global_only=not context,
+    )
     return success_response(
         message="Available HotSpot plans",
         data=[
             {
-                "_id": str(p.id),  # the captive portal needs this to initiate a purchase - was missing entirely
+                "_id": str(p.id),
+                "site_id": p.site_id,
                 "name": p.name,
                 "duration_hours": p.duration_hours,
                 "data_allowance_mb": p.data_allowance_mb,
@@ -136,23 +194,67 @@ async def list_public_hotspot_plans(
     )
 
 
+@router.post("/devices/attest", response_model=dict)
+async def attest_hotspot_device(
+    data: HotspotDeviceAttestationRequest,
+    response: Response,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Use untrusted RouterOS hints to request authenticated relay observation."""
+    context = await HotspotAttestationService(db).create_context(data.ip_address, data.mac_address)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return success_response(message="HotSpot device context verified", data=context)
+
+
 @router.post("/devices/lookup", response_model=dict)
 async def lookup_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
     """Resolve one private LAN IP or MAC against configured MikroTik DHCP leases."""
     device = await _resolve_hotspot_device(data, db)
-    return success_response(message="Device verified", data=device)
+    return success_response(message="Device verified against a unique active router lease", data=device)
 
 
 @router.post("/purchase", response_model=dict, status_code=201)
-async def purchase_hotspot_voucher(data: HotspotPurchaseRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Public, no-auth: a walk-up guest picks a plan on the captive
-    portal and pays directly - no customer account involved. Pairs with
-    GET /purchase/status/{checkout_request_id} for the frontend to poll
-    until the voucher is ready."""
-    verified_device = await _resolve_hotspot_device(
-        HotspotDeviceLookupRequest(mac_address=data.device_mac),
-        db,
-    )
+async def purchase_hotspot_voucher(
+    data: HotspotPurchaseRequest,
+    response: Response,
+    hotspot_context: Optional[str] = Header(default=None, alias="X-Hotspot-Context"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Start a walk-up purchase after server-side device and site validation."""
+    plan = await HotspotService(db).get_plan(data.plan_id)
+    if hotspot_context:
+        response.headers["Cache-Control"] = "no-store"
+    if plan.site_id and not hotspot_context:
+        raise ConflictError("A trusted router context is required for this site-specific package")
+    trusted_context = None
+    if hotspot_context:
+        try:
+            trusted_context = await HotspotAttestationService(db).attest_purchase_device(
+                raw_token=hotspot_context,
+                device_type=data.device_type,
+                client_ip=data.ip_address,
+                client_mac=data.device_mac,
+            )
+        except APIException:
+            if plan.site_id:
+                raise
+            # Global plans remain compatible with existing lease verification
+            # if the external relay has not implemented its Phase 4 contract.
+
+    if trusted_context:
+        verified_device = {
+            "mac_address": trusted_context.client_mac,
+            "ip_address": trusted_context.client_ip,
+            "router_id": trusted_context.router_id,
+            "site_id": trusted_context.site_id,
+        }
+    else:
+        verified_device = await _resolve_hotspot_device(
+            HotspotDeviceLookupRequest(ip_address=data.ip_address, mac_address=data.device_mac),
+            db,
+        )
+
     from app.services.mpesa_service import MpesaService
     service = MpesaService(db)
     tx = await service.initiate_hotspot_purchase(
@@ -160,6 +262,8 @@ async def purchase_hotspot_voucher(data: HotspotPurchaseRequest, db: AsyncIOMoto
         phone_number=data.phone_number,
         device_type=data.device_type,
         device_mac=verified_device["mac_address"],
+        trusted_site_id=trusted_context.site_id if trusted_context else None,
+        trusted_router_id=trusted_context.router_id if trusted_context else None,
     )
     return success_response(
         message="STK push sent - check your phone",
@@ -170,9 +274,7 @@ async def purchase_hotspot_voucher(data: HotspotPurchaseRequest, db: AsyncIOMoto
 
 @router.get("/purchase/status/{checkout_request_id}", response_model=dict)
 async def purchase_status(checkout_request_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Public, no-auth: the captive portal polls this after POST /purchase
-    until status is 'success' (voucher_code will be populated) or
-    'failed'/'cancelled'/'timeout'."""
+    """Public status polling for a completed or pending HotSpot purchase."""
     from app.services.mpesa_service import MpesaService
     service = MpesaService(db)
     tx = await service.get_by_checkout_id(checkout_request_id)
@@ -184,9 +286,16 @@ async def purchase_status(checkout_request_id: str, db: AsyncIOMotorDatabase = D
 
 @router.post("/free-trial", response_model=dict, status_code=201)
 async def request_free_trial(data: HotspotTrialRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Issue a one-time, three-minute voucher bound to a captive client MAC."""
+    """Issue a one-time, three-minute voucher bound to a verified captive client."""
+    verified_device = await _resolve_hotspot_device(
+        HotspotDeviceLookupRequest(
+            ip_address=data.ip_address,
+            mac_address=data.client_mac,
+        ),
+        db,
+    )
     service = HotspotService(db)
-    trial = await service.request_free_trial(data.client_mac)
+    trial = await service.request_free_trial(verified_device["mac_address"])
     return success_response(
         message="Three-minute trial issued",
         data=trial,

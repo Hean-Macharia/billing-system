@@ -118,6 +118,15 @@ class RouterRelayClient:
         rows = payload.get("data") if isinstance(payload, dict) else payload
         return rows if isinstance(rows, list) else []
 
+    async def attest_hotspot_client(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Request a signed, read-only HotSpot observation from the relay.
+
+        The endpoint is a Phase 4 server contract and is not implemented by
+        the external relay in this repository. Callers must validate the
+        signed response before trusting any value in it.
+        """
+        return await self._request("POST", "/api/v1/router/attest", request)
+
     async def get_queues(self) -> list:
         payload = await self._request("POST", "/api/v1/router/relay", {"action": "queue.list"})
         rows = payload.get("data") if isinstance(payload, dict) else payload

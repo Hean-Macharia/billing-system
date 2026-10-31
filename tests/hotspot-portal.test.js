@@ -38,6 +38,17 @@ test('preserves non-hex RouterOS CHAP substitutions as their supplied text', () 
   });
 });
 
+test('decodes RouterOS octal-escaped CHAP bytes before hashing', () => {
+  const redirect = parseRedirectParameters(
+    '?link-login-only=http%3A%2F%2Frouter.hotspot%2Flogin&chap-id=%5C371&chap-challenge=%5C357%5C015%5C330%5C013%5C021%5C234%5C145%5C245%5C303%5C253%5C142%5C246%5C133%5C175%5C375%5C316',
+  );
+  assert.equal(redirect.ok, true);
+  assert.equal(
+    createLoginSubmission(redirect, 'VOUCHER123').fields.password,
+    'c701397dd42d0cf9453a0fa752c59193',
+  );
+});
+
 test('rejects missing and unsafe router parameters with useful feedback', () => {
   assert.equal(parseRedirectParameters('').state, 'missing');
   assert.match(parseRedirectParameters('?chap-id=00').message, /login URL/i);

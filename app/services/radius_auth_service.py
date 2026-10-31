@@ -19,6 +19,7 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.radius import RadiusAccounting, RadiusUser, RadiusUserType
 from app.schemas.radius_auth import RadiusAccountingRequest, RadiusAuthRequest, RadiusAuthResponse
+from app.services.nas_identity_service import NasIdentity, resolve_nas_identity
 
 logger = get_logger(__name__)
 
@@ -61,7 +62,37 @@ class RadiusAuthService:
         if not user_doc:
             voucher = await self._check_voucher(username, calling_station)
             if voucher:
-                return await self._authorize_voucher(voucher, nas_ip, calling_station)
+                try:
+                    nas_identity = await resolve_nas_identity(
+                        self.db,
+                        req.NAS_IP_Address,
+                        req.NAS_Identifier,
+                    )
+                except Exception as exc:
+                    nas_identity = NasIdentity(status="unresolved", reason="identity_lookup_failed")
+                    logger.warning("RADIUS NAS mapping unavailable during auth (%s)", type(exc).__name__)
+                voucher_site_id = str(voucher.get("site_id")) if voucher.get("site_id") else None
+                if voucher_site_id and not nas_identity.resolved:
+                    logger.warning(
+                        "RADIUS restricted voucher rejected: NAS identity unresolved (%s)",
+                        nas_identity.reason,
+                    )
+                    return RadiusAuthResponse(
+                        control_Auth_Type="Reject",
+                        reply_Reply_Message="Unable to verify the access site",
+                    )
+                if voucher_site_id and nas_identity.site_id != voucher_site_id:
+                    logger.warning("RADIUS restricted voucher rejected: site mismatch")
+                    return RadiusAuthResponse(
+                        control_Auth_Type="Reject",
+                        reply_Reply_Message="Voucher is not valid at this site",
+                    )
+                return await self._authorize_voucher(
+                    voucher,
+                    nas_ip,
+                    calling_station,
+                    nas_identity=nas_identity,
+                )
             logger.warning("RADIUS auth rejected: no eligible user or voucher")
             return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid credentials")
 
@@ -209,14 +240,18 @@ class RadiusAuthService:
             return None
 
         normalized_station = (calling_station or "").replace("-", ":").upper()
-        trial_mac = voucher.get("trial_mac")
-        bound_mac = voucher.get("bound_mac")
-        required_mac = trial_mac or bound_mac or voucher.get("calling_station_id")
-        if required_mac:
-            normalized_required_mac = required_mac.replace("-", ":").upper()
-            if normalized_station != normalized_required_mac:
-                logger.warning("RADIUS voucher rejected: stage=device_binding reason=mac_mismatch")
-                return None
+        authorized_macs = {
+            str(mac).replace("-", ":").upper()
+            for mac in voucher.get("authorized_macs", [])
+            if mac
+        }
+        primary_mac = voucher.get("trial_mac") or voucher.get("bound_mac") or voucher.get("calling_station_id")
+        if primary_mac:
+            authorized_macs.add(str(primary_mac).replace("-", ":").upper())
+        max_devices = max(1, int(voucher.get("max_devices") or 1))
+        if normalized_station not in authorized_macs and len(authorized_macs) >= max_devices:
+            logger.warning("RADIUS voucher rejected: stage=device_binding reason=mac_mismatch")
+            return None
 
         # Check expiry
         expiry = voucher.get("expiry_date")
@@ -228,9 +263,19 @@ class RadiusAuthService:
             logger.warning("RADIUS voucher rejected: stage=expiry reason=expired")
             return None
 
+        if not normalized_station:
+            logger.warning("RADIUS voucher rejected: stage=device_binding reason=missing_calling_station")
+            return None
+
         return voucher
 
-    async def _authorize_voucher(self, voucher: dict, nas_ip: str, calling_station: str) -> RadiusAuthResponse:
+    async def _authorize_voucher(
+        self,
+        voucher: dict,
+        nas_ip: str,
+        calling_station: str,
+        nas_identity: Optional[NasIdentity] = None,
+    ) -> RadiusAuthResponse:
         """Authorize a HotSpot voucher."""
         now = datetime.now(timezone.utc)
         duration = voucher.get("duration_hours")
@@ -260,28 +305,83 @@ class RadiusAuthService:
                     reply_Reply_Message="Voucher data allowance has been used",
                 )
 
-        claim = await self.voucher_collection.update_one(
-            {"_id": voucher["_id"], "status": "active"},
-            {
-                "$set": {
-                    "status": "used",
-                    "used_at": now,
-                    "nas_ip": nas_ip,
-                    "calling_station_id": calling_station,
-                    **({"expiry_date": session_expiry} if session_expiry else {}),
-                    "updated_at": now,
-                }
-            },
+        normalized_station = (calling_station or "").replace("-", ":").upper()
+        existing_macs = list(voucher.get("authorized_macs") or [])
+        existing_macs = [str(mac).replace("-", ":").upper() for mac in existing_macs if mac]
+        max_devices = max(1, int(voucher.get("max_devices") or 1))
+        primary_mac = voucher.get("trial_mac") or voucher.get("bound_mac") or voucher.get("calling_station_id")
+        if primary_mac:
+            primary_mac = str(primary_mac).replace("-", ":").upper()
+            if primary_mac not in existing_macs:
+                existing_macs.insert(0, primary_mac)
+        await self.voucher_collection.update_one(
+            {"_id": voucher["_id"], "authorized_macs": {"$exists": False}},
+            {"$set": {"authorized_macs": existing_macs}},
         )
-        if claim.modified_count == 0:
-            existing = await self.voucher_collection.find_one({"_id": voucher["_id"], "status": "used"})
-            existing_station = (existing or {}).get("calling_station_id", "").replace("-", ":").upper()
-            normalized_station = (calling_station or "").replace("-", ":").upper()
-            if not existing or not normalized_station or existing_station != normalized_station:
-                return RadiusAuthResponse(
-                    control_Auth_Type="Reject",
-                    reply_Reply_Message="Voucher has already been used",
-                )
+        if primary_mac:
+            await self.voucher_collection.update_one(
+                {"_id": voucher["_id"]},
+                {"$addToSet": {"authorized_macs": primary_mac}},
+            )
+        if voucher.get("available_device_slots") is None:
+            await self.voucher_collection.update_one(
+                {
+                    "_id": voucher["_id"],
+                    "$or": [
+                        {"available_device_slots": {"$exists": False}},
+                        {"available_device_slots": None},
+                    ],
+                },
+                {"$set": {"available_device_slots": max(0, max_devices - len(existing_macs))}},
+            )
+
+        now_claim_values = {
+            "status": "used",
+            "used_at": voucher.get("used_at") or now,
+            "nas_ip": nas_ip,
+            "updated_at": now,
+        }
+        if nas_identity and nas_identity.resolved:
+            now_claim_values["last_router_id"] = nas_identity.router_id
+            now_claim_values["last_site_id"] = nas_identity.site_id
+            now_claim_values["last_nas_identifier"] = nas_identity.nas_identifier
+        if not voucher.get("calling_station_id"):
+            now_claim_values["calling_station_id"] = normalized_station
+        if session_expiry and voucher.get("status") == "active":
+            now_claim_values["expiry_date"] = session_expiry
+
+        if normalized_station in existing_macs:
+            await self.voucher_collection.update_one(
+                {"_id": voucher["_id"], "status": "active"},
+                {"$set": now_claim_values},
+            )
+        else:
+            claim_filter = {
+                "_id": voucher["_id"],
+                "status": {"$in": ["active", "used"]},
+                "authorized_macs": {"$ne": normalized_station},
+                "available_device_slots": {"$gt": 0},
+            }
+            await self.voucher_collection.update_one(
+                claim_filter,
+                {
+                    "$addToSet": {"authorized_macs": normalized_station},
+                    "$inc": {"available_device_slots": -1},
+                    "$set": now_claim_values,
+                },
+            )
+
+        claimed = await self.voucher_collection.find_one({"_id": voucher["_id"]})
+        claimed_macs = {
+            str(mac).replace("-", ":").upper()
+            for mac in (claimed or {}).get("authorized_macs", [])
+            if mac
+        }
+        if not claimed or claimed.get("status") != "used" or normalized_station not in claimed_macs:
+            return RadiusAuthResponse(
+                control_Auth_Type="Reject",
+                reply_Reply_Message="Maximum devices for this voucher have already been paired",
+            )
 
         reply = RadiusAuthResponse(control_Auth_Type="Accept")
 
@@ -292,8 +392,8 @@ class RadiusAuthService:
         if rate_limit:
             reply.reply_Mikrotik_Rate_Limit = rate_limit
 
-        # Simultaneous device cap - same gap, voucher.max_devices was
-        # never wired to the RADIUS reply.
+        # Return the plan's device cap as a hint to the NAS. The backend's
+        # authorized_macs claim above enforces the distinct-device limit.
         max_devices = voucher.get("max_devices")
         if max_devices:
             reply.reply_Simultaneous_Use = max_devices
@@ -371,6 +471,17 @@ class RadiusAuthService:
     async def _accounting_start(self, req: RadiusAccountingRequest) -> None:
         """Handle Accounting-Start."""
         now = datetime.now(timezone.utc)
+        try:
+            nas_identity = await resolve_nas_identity(
+                self.db,
+                req.NAS_IP_Address,
+                req.NAS_Identifier,
+            )
+        except Exception as exc:
+            nas_identity = NasIdentity(status="unresolved", reason="identity_lookup_failed")
+            logger.warning("RADIUS NAS mapping unavailable during accounting (%s)", type(exc).__name__)
+        if not nas_identity.resolved:
+            logger.warning("RADIUS accounting NAS identity unresolved (%s)", nas_identity.reason)
 
         # Extract customer info from Class attribute if present
         customer_id = None
@@ -398,6 +509,8 @@ class RadiusAuthService:
             "acct_unique_id": req.Acct_Session_Id,  # Will be updated if available
             "username": req.User_Name or "unknown",
             "nas_ip_address": req.NAS_IP_Address or "",
+            "nas_identifier": req.NAS_Identifier,
+            "router_id": nas_identity.router_id if nas_identity.resolved else None,
             "nas_port_id": req.NAS_Port,
             "nas_port_type": req.NAS_Port_Type,
             "acct_start_time": now,
@@ -415,6 +528,7 @@ class RadiusAuthService:
             "class_attr": req.Class,
             "customer_id": customer_id,
             "subscription_id": subscription_id,
+            "site_id": nas_identity.site_id if nas_identity.resolved else None,
             "voucher_id": voucher_id,
             "created_at": now,
             "updated_at": now,
@@ -434,12 +548,14 @@ class RadiusAuthService:
                     "acct_session_id": req.Acct_Session_Id,
                     "username": req.User_Name or "unknown",
                     "nas_ip_address": req.NAS_IP_Address or "",
+                    "nas_identifier": req.NAS_Identifier,
+                    "router_id": nas_identity.router_id if nas_identity.resolved else None,
                     "nas_port_id": req.NAS_Port,
                     "framed_ip_address": req.Framed_IP_Address,
                     "calling_station_id": req.Calling_Station_Id,
                     "customer_id": customer_id,
                     "subscription_id": subscription_id,
-                    "site_id": None,  # Can be resolved from NAS
+                    "site_id": nas_identity.site_id if nas_identity.resolved else None,
                     "acct_start_time": now,
                     "acct_session_time": 0,
                     "acct_input_octets": 0,

@@ -16,7 +16,7 @@ async def client():
 
 class TestRootEndpoint:
     @pytest.mark.asyncio
-    async def test_root_redirects_to_hotspot(self, client):
+    async def test_root_redirects_to_documented_hotspot_entry(self, client):
         response = await client.get("/")
         assert response.status_code == 307
         assert response.headers["location"] == "/hotspot/"
@@ -25,13 +25,17 @@ class TestRootEndpoint:
     async def test_frontend_routes_serve_static_apps(self, client):
         for path, marker in (
             ("/hotspot/", "DEVZEN CREATIONS"),
-            ("/admin/", "DEVZEN CREATIONS"),
-            ("/portal/", "DEVZEN CREATIONS"),
+            ("/admin/", "DevZen Creations"),
+            ("/portal/", "DevZen Creations"),
         ):
             response = await client.get(path)
             assert response.status_code == 200
             assert marker in response.text
             assert "content-security-policy" not in response.headers
+
+        secondary_portal = await client.get("/index.html")
+        assert secondary_portal.status_code == 200
+        assert "DEVZEN CREATIONS" in secondary_portal.text
 
 
 class TestHealthEndpoints:

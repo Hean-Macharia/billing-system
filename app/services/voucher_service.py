@@ -35,6 +35,8 @@ def _generate_code(length: int, prefix: str = "") -> str:
 
 
 class VoucherService:
+    USE_PLAN_SITE = object()
+
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.batches = db.voucher_batches
@@ -49,6 +51,8 @@ class VoucherService:
         data: VoucherBatchCreate,
         created_by: Optional[str] = None,
         purchase_transaction_id: Optional[str] = None,
+        site_id_override=USE_PLAN_SITE,
+        router_id_override: Optional[str] = None,
     ) -> VoucherBatch:
         duration_hours = data.duration_hours
         data_allowance_mb = data.data_allowance_mb
@@ -56,17 +60,35 @@ class VoucherService:
         max_devices = data.max_devices
         price = data.price
         currency = data.currency
+        plan_site_id = None
 
         if data.plan_id:
             plan = await self.plans.find_one({"_id": self._oid(data.plan_id, "Plan")})
             if not plan:
                 raise NotFoundError("HotSpot plan not found")
+            plan_site_id = plan.get("site_id")
+            if site_id_override is self.USE_PLAN_SITE:
+                if plan_site_id and data.site_id and str(plan_site_id) != str(data.site_id):
+                    raise ValidationError("A site-specific plan cannot be assigned to a different site")
+                effective_site_id = plan_site_id or data.site_id
+            else:
+                effective_site_id = site_id_override
+                if (
+                    effective_site_id
+                    and plan_site_id
+                    and str(plan_site_id) != str(effective_site_id)
+                ):
+                    raise ValidationError("The purchase site no longer matches its HotSpot plan")
+            data = data.model_copy(update={"site_id": effective_site_id})
             duration_hours = duration_hours or plan.get("duration_hours")
             data_allowance_mb = data_allowance_mb or plan.get("data_allowance_mb")
             rate_limit = rate_limit or plan.get("rate_limit")
             max_devices = max_devices or plan.get("max_devices", 1)
             price = price or plan.get("price", 0.0)
             currency = currency or plan.get("currency", "KES")
+
+        if router_id_override is not None:
+            data = data.model_copy(update={"router_id": router_id_override})
 
         if not duration_hours:
             raise ValidationError("duration_hours is required (directly or via plan_id)")
@@ -122,36 +144,58 @@ class VoucherService:
         plan_id: str,
         device_mac: str,
         device_type: str,
+        site_id=USE_PLAN_SITE,
+        router_id: Optional[str] = None,
     ) -> dict:
         """Create or retrieve the single voucher associated with a paid purchase."""
         existing = await self.vouchers.find_one(
             {"purchase_transaction_id": purchase_transaction_id}
         )
         if existing:
+            normalized_mac = device_mac.replace("-", ":").upper()
+            authorized_macs = list(existing.get("authorized_macs") or [])
+            if normalized_mac not in authorized_macs:
+                authorized_macs.insert(0, normalized_mac)
+            available_slots = max(0, int(existing.get("max_devices") or 1) - len(authorized_macs))
             await self.vouchers.update_one(
                 {"_id": existing["_id"]},
                 {
                     "$set": {
                         "bound_mac": device_mac,
+                        "authorized_macs": authorized_macs,
+                        "available_device_slots": available_slots,
                         "device_type": device_type,
                         "updated_at": datetime.now(timezone.utc),
                     }
                 },
             )
             existing["bound_mac"] = device_mac
+            existing["authorized_macs"] = authorized_macs
+            existing["available_device_slots"] = available_slots
             existing["device_type"] = device_type
             return existing
+
+        site_snapshot = site_id
+        if site_snapshot is self.USE_PLAN_SITE:
+            plan = await self.plans.find_one({"_id": self._oid(plan_id, "Plan")})
+            if not plan:
+                raise NotFoundError("HotSpot plan not found")
+            site_snapshot = plan.get("site_id")
 
         data = VoucherBatchCreate(
             batch_name=f"HotSpot self-service purchase {purchase_transaction_id}",
             quantity=1,
             plan_id=plan_id,
+            site_id=site_snapshot,
+            router_id=router_id,
             activate_on_generation=True,
         )
         try:
             await self.create_batch(
                 data,
                 purchase_transaction_id=purchase_transaction_id,
+                site_id_override=site_snapshot,
+                router_id_override=router_id,
             )
         except Exception:
             existing = await self.vouchers.find_one(
@@ -159,6 +203,30 @@ class VoucherService:
             )
             if not existing:
                 raise
+            normalized_mac = device_mac.replace("-", ":").upper()
+            authorized_macs = list(existing.get("authorized_macs") or [])
+            if normalized_mac not in authorized_macs:
+                authorized_macs.insert(0, normalized_mac)
+            available_slots = max(
+                0,
+                int(existing.get("max_devices") or 1) - len(authorized_macs),
+            )
+            await self.vouchers.update_one(
+                {"_id": existing["_id"]},
+                {
+                    "$set": {
+                        "bound_mac": device_mac,
+                        "authorized_macs": authorized_macs,
+                        "available_device_slots": available_slots,
+                        "device_type": device_type,
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            existing["bound_mac"] = device_mac
+            existing["authorized_macs"] = authorized_macs
+            existing["available_device_slots"] = available_slots
+            existing["device_type"] = device_type
             return existing
 
         voucher = await self.vouchers.find_one(
@@ -172,12 +240,16 @@ class VoucherService:
             {
                 "$set": {
                     "bound_mac": device_mac,
+                    "authorized_macs": [device_mac.replace("-", ":").upper()],
+                    "available_device_slots": max(0, int(voucher.get("max_devices") or 1) - 1),
                     "device_type": device_type,
                     "updated_at": datetime.now(timezone.utc),
                 }
             },
         )
         voucher["bound_mac"] = device_mac
+        voucher["authorized_macs"] = [device_mac.replace("-", ":").upper()]
+        voucher["available_device_slots"] = max(0, int(voucher.get("max_devices") or 1) - 1)
         voucher["device_type"] = device_type
         return voucher
 
@@ -211,6 +283,8 @@ class VoucherService:
                     "data_allowance_mb": data_allowance_mb,
                     "rate_limit": rate_limit,
                     "max_devices": max_devices,
+                    "authorized_macs": [],
+                    "available_device_slots": max(1, int(max_devices or 1)),
                     "price": price,
                     "currency": currency,
                     "expiry_date": expiry_date,
@@ -432,8 +506,6 @@ class VoucherService:
 
         if status == VoucherStatus.GENERATED.value:
             return {"voucher_code": code, "valid": False, "status": status, "reason": "Voucher has not been activated yet"}
-        if status == VoucherStatus.USED.value:
-            return {"voucher_code": code, "valid": False, "status": status, "reason": "Voucher has already been used"}
         if status == VoucherStatus.DISABLED.value:
             return {"voucher_code": code, "valid": False, "status": status, "reason": "Voucher has been disabled"}
         if status == VoucherStatus.EXPIRED.value:
@@ -445,6 +517,15 @@ class VoucherService:
             await self.vouchers.update_one({"_id": doc["_id"]}, {"$set": {"status": VoucherStatus.EXPIRED.value, "updated_at": now}})
             return {"voucher_code": code, "valid": False, "status": "expired", "reason": "Voucher has expired"}
 
+        max_devices = max(1, int(doc.get("max_devices") or 1))
+        authorized_macs = {
+            str(mac).replace("-", ":").upper()
+            for mac in doc.get("authorized_macs", [])
+            if mac
+        }
+        primary_mac = doc.get("trial_mac") or doc.get("bound_mac") or doc.get("calling_station_id")
+        if primary_mac:
+            authorized_macs.add(str(primary_mac).replace("-", ":").upper())
         return {
             "voucher_code": code,
             "valid": True,
@@ -452,6 +533,13 @@ class VoucherService:
             "duration_hours": doc.get("duration_hours"),
             "data_allowance_mb": doc.get("data_allowance_mb"),
             "expiry_date": expiry,
+            "max_devices": max_devices,
+            "available_device_slots": max(0, max_devices - len(authorized_macs)),
+            "reason": (
+                "Voucher is already in use. Sign in on a paired device, or pair another device if slots remain."
+                if status == VoucherStatus.USED.value
+                else None
+            ),
         }
 
     # ------------------------------------------------------------------ #

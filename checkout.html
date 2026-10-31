@@ -43,9 +43,11 @@
             <button class="device-pick" type="button" data-device="tv" aria-pressed="false"><i class="bi bi-tv"></i><span>TV</span></button>
             <button class="device-pick" type="button" data-device="other" aria-pressed="false"><i class="bi bi-laptop"></i><span>OTHER DEVICES</span></button>
           </div>
-          <label for="mac">MAC address of the device you selected</label>
-          <div class="inline-form"><input id="mac" class="input" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" required><button class="btn device-verify" type="button" id="verify-device">Verify</button></div>
-          <small id="device-message" class="field-help" aria-live="polite">For a TV or other device, enter that device’s MAC address and connect it to this WiFi before verifying. Purchases are locked to the verified device.</small>
+          <div id="target-device-fields" hidden>
+            <label for="mac">MAC address of the target device</label>
+            <div class="inline-form"><input id="mac" class="input" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off"><button class="btn device-verify" type="button" id="verify-device">Verify device</button></div>
+          </div>
+          <small id="device-message" class="field-help" aria-live="polite">We’ll verify this device from the hotspot connection automatically.</small>
           <label for="phone">M-PESA phone number</label>
           <div class="phone-entry"><span>+254</span><input id="phone" name="phone" type="tel" inputmode="numeric" autocomplete="tel-national" placeholder="7XX XXX XXX" maxlength="9" required></div>
           <small class="field-help">Enter 9 digits after +254.</small>

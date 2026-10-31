@@ -20,7 +20,7 @@ Lifecycle:
 """
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 from pydantic import BaseModel, ConfigDict, Field
@@ -90,6 +90,8 @@ class Voucher(BaseModel):
     data_allowance_mb: Optional[int] = None
     rate_limit: Optional[str] = None
     max_devices: int = 1
+    authorized_macs: List[str] = Field(default_factory=list)
+    available_device_slots: Optional[int] = None
     price: float = 0.0
     currency: str = "KES"
 
@@ -99,6 +101,9 @@ class Voucher(BaseModel):
     used_at: Optional[datetime] = None
     nas_ip: Optional[str] = None
     calling_station_id: Optional[str] = None
+    last_router_id: Optional[str] = None
+    last_site_id: Optional[str] = None
+    last_nas_identifier: Optional[str] = None
 
     printed: bool = False
     printed_at: Optional[datetime] = None

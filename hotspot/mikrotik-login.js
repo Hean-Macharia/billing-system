@@ -108,8 +108,23 @@
     };
   }
 
-  function md5Hex(value) {
-    const bytes = Array.from(new TextEncoder().encode(value));
+  function routerOsBytes(value) {
+    const bytes = [];
+    for (let index = 0; index < value.length;) {
+      if (value[index] === '\\' && /^[0-7]{3}$/.test(value.slice(index + 1, index + 4))) {
+        bytes.push(parseInt(value.slice(index + 1, index + 4), 8));
+        index += 4;
+      } else {
+        const codePoint = value.codePointAt(index);
+        bytes.push(...new TextEncoder().encode(String.fromCodePoint(codePoint)));
+        index += codePoint > 0xffff ? 2 : 1;
+      }
+    }
+    return bytes;
+  }
+
+  function md5Hex(input) {
+    const bytes = Array.from(input);
     const bitLength = bytes.length * 8;
     bytes.push(0x80);
     while (bytes.length % 64 !== 56) bytes.push(0);
@@ -198,7 +213,11 @@
       method: 'post',
       fields: {
         username: code,
-        password: md5Hex(`${redirect.chapId}${code}${redirect.chapChallenge}`),
+        password: md5Hex([
+          ...routerOsBytes(redirect.chapId),
+          ...new TextEncoder().encode(code),
+          ...routerOsBytes(redirect.chapChallenge),
+        ]),
         ...(redirect.destination ? { dst: redirect.destination } : {}),
       },
     };

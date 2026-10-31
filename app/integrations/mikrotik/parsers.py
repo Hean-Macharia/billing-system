@@ -129,12 +129,18 @@ def normalize_active_hotspot(rows: list[dict]) -> list[dict]:
 
 
 def normalize_dhcp_lease(row: dict) -> dict:
+    expires_after = row.get("expires-after", row.get("expires_seconds"))
+    expires_seconds = (
+        int(expires_after)
+        if isinstance(expires_after, (int, float)) and not isinstance(expires_after, bool)
+        else parse_uptime_to_seconds(expires_after)
+    )
     return {
         "address": row.get("address"),
-        "mac_address": row.get("mac-address"),
-        "hostname": row.get("host-name"),
+        "mac_address": row.get("mac-address") or row.get("mac_address"),
+        "hostname": row.get("host-name") or row.get("hostname"),
         "status": row.get("status"),
-        "expires_seconds": parse_uptime_to_seconds(row.get("expires-after")),
+        "expires_seconds": expires_seconds,
         "dynamic": parse_bool(row.get("dynamic")),
     }
 

@@ -40,3 +40,15 @@ services:
         value: isp-billing-api
       - key: ROUTER_CONNECTION_TIMEOUT
         value: "10"
+      - key: MPESA_ENVIRONMENT
+        sync: false
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_CALLBACK_URL
+        sync: false

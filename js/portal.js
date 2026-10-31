@@ -25,6 +25,18 @@ function getDefaultApiBase() {
       || PORTAL_PARAMS.get('client_ip')
       || PORTAL_PARAMS.get('address')
       || '';
+    const HOTSPOT_CONTEXT_KEY = 'dz_hotspot_context';
+
+    function saveHotspotContext(value) {
+      try {
+        if (value) sessionStorage.setItem(HOTSPOT_CONTEXT_KEY, value);
+        else sessionStorage.removeItem(HOTSPOT_CONTEXT_KEY);
+      } catch {}
+    }
+
+    function readHotspotContext() {
+      try { return sessionStorage.getItem(HOTSPOT_CONTEXT_KEY) || ''; } catch { return ''; }
+    }
 
     function voucherLoginMarkup(voucherCode) {
       if (!CAPTIVE_REDIRECT.ok) {
@@ -75,7 +87,26 @@ function getDefaultApiBase() {
     }
 
     async function api(path, opts = {}) {
-      return request(path, { method: opts.method || 'GET', body: opts.body, auth: false });
+      return request(path, { method: opts.method || 'GET', body: opts.body, headers: opts.headers || {}, auth: false });
+    }
+
+    async function attestCurrentHotspotDevice() {
+      if (!CLIENT_IP || !CLIENT_MAC) {
+        saveHotspotContext('');
+        return '';
+      }
+      try {
+        const result = await api('/api/v1/hotspot/devices/attest', {
+          method: 'POST',
+          body: { ip_address: CLIENT_IP, mac_address: CLIENT_MAC },
+        });
+        const token = result?.data?.context_token || '';
+        saveHotspotContext(token);
+        return token;
+      } catch {
+        saveHotspotContext('');
+        return '';
+      }
     }
 
     async function checkBackend() {
@@ -132,13 +163,13 @@ function getDefaultApiBase() {
     }
 
     function openBalanceCheck() {
-      const overlay = showResourceDialog('Check voucher balance', `
-        <p>Enter your DEVZEN CREATIONS WiFi voucher code to check whether it is active.</p>
+      const overlay = showResourceDialog('Check voucher status', `
+        <p>Check whether your DEVZEN CREATIONS WiFi voucher is active and view its expiry. Remaining balance is not available through this API.</p>
         <form id="balance-form">
           <label for="voucher-code">Voucher code</label>
           <input type="text" id="voucher-code" name="voucher_code" autocomplete="off" required maxlength="32" />
           <div class="error-text" id="balance-result" role="status"></div>
-          <button type="submit" class="btn btn-primary" id="balance-submit">Check balance</button>
+          <button type="submit" class="btn btn-primary" id="balance-submit">Check status</button>
         </form>`);
       const result = overlay.querySelector('#balance-result');
       overlay.querySelector('#balance-form').addEventListener('submit', async (event) => {
@@ -154,7 +185,7 @@ function getDefaultApiBase() {
           const expiry = voucher.expiry_date ? new Date(voucher.expiry_date).toLocaleString() : 'Not specified';
           const allowance = voucher.data_allowance_mb == null ? 'Unlimited data' : `${voucher.data_allowance_mb} MB`;
           result.textContent = voucher.valid
-            ? `Voucher is active. ${voucher.duration_hours ?? '—'} hours, ${allowance}. Expires: ${expiry}.`
+            ? `${voucher.status === 'used' ? 'Voucher is ready for a paired device.' : 'Voucher is active.'} ${voucher.duration_hours ?? '—'} hours, ${allowance}. Devices: up to ${voucher.max_devices ?? 1}. Expires: ${expiry}.`
             : (voucher.reason || 'This voucher is not active.');
           result.style.display = 'block';
         } catch (error) {
@@ -162,14 +193,14 @@ function getDefaultApiBase() {
           result.style.display = 'block';
         } finally {
           submit.disabled = false;
-          submit.textContent = 'Check balance';
+          submit.textContent = 'Check status';
         }
       });
       overlay.querySelector('#voucher-code').focus();
     }
 
     function openFreeTrial() {
-      if (!CLIENT_MAC) {
+      if (!CLIENT_MAC && !CLIENT_IP) {
         showResourceDialog('Free trial access', `
           <p>This three-minute trial is issued once per device. Open this page from the DEVZEN CREATIONS MikroTik captive portal so it can provide your device MAC address.</p>
           <p>If the hotspot opened this page but the device could not be identified, contact support:</p>
@@ -192,7 +223,7 @@ function getDefaultApiBase() {
         try {
           const response = await api('/api/v1/hotspot/free-trial', {
             method: 'POST',
-            body: { client_mac: CLIENT_MAC }
+            body: { ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {}), ...(CLIENT_MAC ? { client_mac: CLIENT_MAC } : {}) }
           });
           const trial = response.data;
           overlay.querySelector('#trial-content').innerHTML = `
@@ -240,10 +271,13 @@ function getDefaultApiBase() {
     async function loadPlans() {
       const listEl = document.getElementById('plan-list');
       try {
+        const contextToken = await attestCurrentHotspotDevice();
         let res;
         for (let attempt = 0; ; attempt += 1) {
           try {
-            res = await api('/api/v1/hotspot/plans/public');
+            res = await api('/api/v1/hotspot/plans/public', {
+              headers: contextToken ? { 'X-Hotspot-Context': contextToken } : {},
+            });
             break;
           } catch (error) {
             const canRetry = [502, 503, 504].includes(error.status) && attempt < 2;
@@ -357,37 +391,56 @@ function getDefaultApiBase() {
 
       let selectedDevice = 'this_device';
       let verifiedMac = '';
+      let verifiedDevice = null;
+      let deviceLookupSequence = 0;
       const targetFields = overlay.querySelector('#target-device-fields');
       const deviceStatus = overlay.querySelector('#device-status');
       const normalizeMac = (mac) => String(mac || '').replace(/-/g, ':').toUpperCase();
-      const setVerified = (mac) => {
-        verifiedMac = normalizeMac(mac);
-        deviceStatus.textContent = 'Device verified';
+      const setVerified = (device) => {
+        if (device?.verification_status !== 'verified' || !device.mac_address || !device.router_id) {
+          throw new Error('The router did not return a complete DHCP verification result.');
+        }
+        verifiedDevice = device;
+        verifiedMac = normalizeMac(device.mac_address);
+        deviceStatus.textContent = `Device verified on ${device.router_name || 'the hotspot'}${device.site_id ? ` · site ${device.site_id}` : ''}.`;
         deviceStatus.dataset.verified = 'true';
+        deviceStatus.dataset.state = 'verified';
       };
       const verifyByLookup = async (payload) => {
-        deviceStatus.textContent = '';
+        const sequence = ++deviceLookupSequence;
+        verifiedDevice = null;
+        deviceStatus.textContent = 'Verifying device against the MikroTik DHCP lease…';
         deviceStatus.dataset.verified = 'false';
+        deviceStatus.dataset.state = 'verifying';
         try {
           const response = await api('/api/v1/hotspot/devices/lookup', { method: 'POST', body: payload });
-          setVerified(response.data.mac_address);
+          if (sequence !== deviceLookupSequence) return;
+          setVerified(response.data);
         } catch (error) {
+          if (sequence !== deviceLookupSequence) return;
           verifiedMac = '';
-          deviceStatus.textContent = error.message;
+          verifiedDevice = null;
+          deviceStatus.textContent = `Device verification failed: ${error.message}`;
+          deviceStatus.dataset.state = 'failed';
         }
       };
       const renderDeviceFields = () => {
+        deviceLookupSequence += 1;
         verifiedMac = '';
+        verifiedDevice = null;
         deviceStatus.dataset.verified = 'false';
+        deviceStatus.dataset.state = 'identifying';
         if (selectedDevice === 'this_device') {
+          deviceStatus.textContent = 'Identifying this device from the MikroTik captive redirect…';
           if (CLIENT_MAC) {
-            setVerified(CLIENT_MAC);
+            verifyByLookup({ ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {}), mac_address: CLIENT_MAC });
           } else {
             targetFields.replaceChildren();
             if (CLIENT_IP) {
               verifyByLookup({ ip_address: CLIENT_IP });
             } else {
-              deviceStatus.textContent = 'Device could not be identified automatically.';
+              deviceStatus.textContent = 'Device verification failed: reconnect through the DevZen Wi-Fi sign-in page so MikroTik can provide this device’s address.';
+              deviceStatus.dataset.state = 'failed';
             }
           }
         } else if (selectedDevice === 'tv') {
@@ -405,8 +458,11 @@ function getDefaultApiBase() {
         }
         targetFields.querySelectorAll('input').forEach((input) => {
           input.addEventListener('input', () => {
+            deviceLookupSequence += 1;
             verifiedMac = '';
+            verifiedDevice = null;
             deviceStatus.dataset.verified = 'false';
+            deviceStatus.dataset.state = 'identifying';
             deviceStatus.textContent = '';
           });
         });
@@ -455,8 +511,10 @@ function getDefaultApiBase() {
               plan_id: plan._id,
               phone_number: phone,
               device_type: selectedDevice,
-              device_mac: verifiedMac
-            }
+              device_mac: verifiedMac,
+              ...(verifiedDevice?.ip_address ? { ip_address: verifiedDevice.ip_address } : {})
+            },
+            headers: readHotspotContext() ? { 'X-Hotspot-Context': readHotspotContext() } : {},
           });
           showWaitingScreen(overlay, res.data.checkout_request_id);
         } catch (error) {

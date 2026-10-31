@@ -570,7 +570,8 @@ class RouterService:
                 await client.connect()
                 raw = await client.get_dhcp_leases()
                 return [normalize_dhcp_lease(row) for row in raw]
-            return await client.get_dhcp_leases()
+            raw = await client.get_dhcp_leases()
+            return [normalize_dhcp_lease(row) for row in raw]
         finally:
             await self._close_client(client, api_type)
 

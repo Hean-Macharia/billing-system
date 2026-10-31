@@ -13,6 +13,7 @@ class NasClientCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     site_id: Optional[str] = None
     ip_address: str
+    nas_identifier: Optional[str] = None
     secret: str = Field(..., min_length=8)
     description: Optional[str] = None
     location: Optional[str] = None
@@ -24,6 +25,7 @@ class NasClientUpdate(BaseModel):
     name: Optional[str] = None
     site_id: Optional[str] = None
     ip_address: Optional[str] = None
+    nas_identifier: Optional[str] = None
     secret: Optional[str] = None
     description: Optional[str] = None
     location: Optional[str] = None
@@ -37,6 +39,7 @@ class NasClientResponse(BaseModel):
     name: str
     site_id: Optional[str]
     ip_address: str
+    nas_identifier: Optional[str] = None
     description: Optional[str]
     location: Optional[str]
     nas_type: str
@@ -107,6 +110,8 @@ class RadiusSessionResponse(BaseModel):
     acct_session_id: str
     username: str
     nas_ip_address: str
+    nas_identifier: Optional[str] = None
+    router_id: Optional[str] = None
     nas_port_id: Optional[str]
     framed_ip_address: Optional[str]
     calling_station_id: Optional[str]
@@ -116,6 +121,7 @@ class RadiusSessionResponse(BaseModel):
     acct_output_octets: int
     customer_id: Optional[str]
     site_id: Optional[str]
+    router_id: Optional[str] = None
     status: str
     last_seen: datetime
 

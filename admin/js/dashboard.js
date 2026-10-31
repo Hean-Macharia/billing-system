@@ -85,7 +85,7 @@ if (window.Chart) {
   }).reduce((sum, p) => sum + Number(p.amount_kes || 0), 0));
   new Chart(document.querySelector('#revenue-chart'), {
     type: 'line',
-    data: { labels: recentMonths.map(d => d.toLocaleString('en', { month: 'short' })), datasets: [{ data: totals, borderColor: '#E11D2E', backgroundColor: 'rgba(225,29,46,.12)', fill: true, tension: .38, pointRadius: 3 }] },
+    data: { labels: recentMonths.map(d => d.toLocaleString('en', { month: 'short' })), datasets: [{ data: totals, borderColor: '#2563EB', backgroundColor: 'rgba(37,99,235,.12)', fill: true, tension: .38, pointRadius: 3 }] },
     options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => currency(ctx.raw) } } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,.12)' }, ticks: { callback: v => currency(v) } }, x: { grid: { display: false } } }, animation: { duration: 800, easing: 'easeOutQuart' } },
   });
 }

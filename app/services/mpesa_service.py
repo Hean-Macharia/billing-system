@@ -9,6 +9,7 @@ Phase 5 responsibilities:
 - Renew/Activate Subscription
 - Reconcile pending transactions
 """
+import asyncio
 import hashlib
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
@@ -88,7 +89,8 @@ class MpesaService:
 
         try:
             # Call Safaricom Daraja API
-            resp = self.daraja.initiate_stk_push(
+            resp = await asyncio.to_thread(
+                self.daraja.initiate_stk_push,
                 phone_number=data.phone_number,
                 amount=data.amount,
                 account_reference=data.account_reference,
@@ -200,7 +202,10 @@ class MpesaService:
     async def _query_provider_status(self, checkout_request_id: str) -> Optional[dict]:
         """Return a status response confirmed by Daraja for this checkout."""
         try:
-            response = self.daraja.query_stk_status(checkout_request_id)
+            response = await asyncio.to_thread(
+                self.daraja.query_stk_status,
+                checkout_request_id,
+            )
         except Exception as exc:
             logger.warning(
                 "M-Pesa provider status verification unavailable: %s",
@@ -531,20 +536,38 @@ class MpesaService:
     # process_callback.
 
     async def initiate_hotspot_purchase(
-        self, plan_id: str, phone_number: str, device_type: str, device_mac: str
+        self,
+        plan_id: str,
+        phone_number: str,
+        device_type: str,
+        device_mac: str,
+        trusted_site_id: Optional[str] = None,
+        trusted_router_id: Optional[str] = None,
     ) -> MpesaTransactionInDB:
         plan = await self.db.hotspot_plans.find_one({"_id": ObjectId(plan_id)})
         if not plan:
             raise NotFoundError("HotSpot plan not found")
         if not plan.get("is_active", True):
             raise ValidationError("This plan is no longer available")
+        plan_site_id = str(plan.get("site_id")) if plan.get("site_id") else None
+        if plan_site_id and not (trusted_site_id and trusted_router_id):
+            raise ValidationError(
+                "Site-specific plans are unavailable until this request has a trusted router context"
+            )
+        if plan_site_id and str(trusted_site_id) != plan_site_id:
+            raise ValidationError("This package is not available at the verified router site")
+        if bool(trusted_site_id) != bool(trusted_router_id):
+            raise ValidationError("Trusted router and site context must be provided together")
 
         now = datetime.now(timezone.utc)
         doc = {
             "transaction_type": "hotspot_purchase",
             "merchant_request_id": None,
             "customer_id": None, "invoice_id": None, "subscription_id": None,
-            "hotspot_plan_id": plan_id, "voucher_code": None,
+            "hotspot_plan_id": plan_id,
+            "site_id": trusted_site_id or plan_site_id,
+            "router_id": trusted_router_id,
+            "voucher_code": None,
             "device_type": device_type, "device_mac": device_mac.replace("-", ":").upper(),
             "amount": plan["price"], "phone_number": phone_number,
             "account_reference": plan["name"], "transaction_desc": f"HotSpot: {plan['name']}",
@@ -560,7 +583,8 @@ class MpesaService:
         tx = MpesaTransactionInDB(**doc)
 
         try:
-            resp = self.daraja.initiate_stk_push(
+            resp = await asyncio.to_thread(
+                self.daraja.initiate_stk_push,
                 phone_number=phone_number, amount=plan["price"],
                 account_reference=plan["name"], transaction_desc=f"HotSpot: {plan['name']}",
             )
@@ -602,6 +626,8 @@ class MpesaService:
                 plan_id=plan_id,
                 device_mac=doc.get("device_mac", ""),
                 device_type=doc.get("device_type", ""),
+                site_id=doc.get("site_id") if "site_id" in doc else VoucherService.USE_PLAN_SITE,
+                router_id=doc.get("router_id"),
             )
             voucher_code = voucher["voucher_code"]
 
