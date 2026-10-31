@@ -16,6 +16,12 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _masked_phone(phone_number: str) -> str:
+    """Keep only the final four digits when identifying a phone in logs."""
+    digits = "".join(character for character in str(phone_number) if character.isdigit())
+    return f"***{digits[-4:]}" if digits else "***"
+
+
 class DarajaClient:
     """Low-level Safaricom Daraja API client."""
 
@@ -99,7 +105,7 @@ class DarajaClient:
         url = f"{self.base_url}/mpesa/stkpush/v1/processrequest"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-        logger.info(f"STK Push -> {phone_number} | KES {amount} | Ref: {account_reference}")
+        logger.info("STK Push -> %s | KES %s | Ref: %s", _masked_phone(phone_number), amount, account_reference)
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
         resp.raise_for_status()
         data = resp.json()
