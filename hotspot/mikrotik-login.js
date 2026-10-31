@@ -26,7 +26,16 @@
   function getSafeDestination(rawDestination) {
     if (!rawDestination) return { destination: '', invalid: false };
     try {
-      const destination = new URL(rawDestination);
+      let destination;
+      try {
+        destination = new URL(rawDestination);
+      } catch (error) {
+        // RouterOS link-orig-esc can be URL-escaped before the enclosing
+        // captive redirect form encodes it again. URLSearchParams removes
+        // only the outer layer, so decode the encoded scheme exactly once.
+        if (!/^https?%3a%2f%2f/i.test(rawDestination)) throw error;
+        destination = new URL(decodeURIComponent(rawDestination));
+      }
       if (!['http:', 'https:'].includes(destination.protocol)) {
         return { destination: '', invalid: true };
       }

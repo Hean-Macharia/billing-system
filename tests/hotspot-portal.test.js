@@ -49,6 +49,20 @@ test('decodes RouterOS octal-escaped CHAP bytes before hashing', () => {
   );
 });
 
+test('parses the supplied RouterOS 6 captive redirect URL including double-encoded link-orig', () => {
+  const captiveUrl = 'https://billing-system-5ckp.onrender.com/hotspot/?link-login-only=http%3A%2F%2Flogin.hean.local%2Flogin&link-orig=http%253A%252F%252Fconnectivitycheck.gstatic.com%252Fgenerate%255F204&chap-id=%5C213&chap-challenge=%5C277%5C154%5C110%5C145%5C127%5C347%5C223%5C373%5C157%5C252%5C232%5C270%5C110%5C011%5C006%5C314';
+  const redirect = parseRedirectParameters(new URL(captiveUrl).search);
+
+  assert.equal(redirect.ok, true);
+  assert.equal(redirect.action, 'http://login.hean.local/login');
+  assert.equal(redirect.destination, 'http://connectivitycheck.gstatic.com/generate_204');
+  assert.equal(redirect.chapId, '\\213');
+  assert.equal(
+    createLoginSubmission(redirect, 'TESTVOUCHER').fields.password,
+    'c761e20a70643b0731d09c019f3996de',
+  );
+});
+
 test('rejects missing and unsafe router parameters with useful feedback', () => {
   assert.equal(parseRedirectParameters('').state, 'missing');
   assert.match(parseRedirectParameters('?chap-id=00').message, /login URL/i);

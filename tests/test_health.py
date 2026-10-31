@@ -37,6 +37,23 @@ class TestRootEndpoint:
         assert secondary_portal.status_code == 200
         assert "DEVZEN CREATIONS" in secondary_portal.text
 
+    @pytest.mark.asyncio
+    async def test_hotspot_static_entry_serves_direct_and_routeros_redirect_urls(self, client):
+        captive_query = (
+            "?link-login-only=http%3A%2F%2Flogin.hean.local%2Flogin"
+            "&link-orig=http%253A%252F%252Fconnectivitycheck.gstatic.com%252Fgenerate%255F204"
+            "&chap-id=%5C213"
+            "&chap-challenge=%5C277%5C154%5C110%5C145%5C127%5C347%5C223%5C373%5C157%5C252%5C232%5C270%5C110%5C011%5C006%5C314"
+        )
+        direct = await client.get("/hotspot/")
+        redirected = await client.get(f"/hotspot/{captive_query}")
+
+        assert direct.status_code == 200
+        assert redirected.status_code == 200
+        assert redirected.headers["content-type"].startswith("text/html")
+        assert "mikrotik-login.js" in redirected.text
+        assert "js/app.js" in redirected.text
+
 
 class TestHealthEndpoints:
     @pytest.mark.asyncio
