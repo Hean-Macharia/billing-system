@@ -45,6 +45,7 @@ def _plan_to_response(p) -> dict:
 
 async def _resolve_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOMotorDatabase) -> dict:
     """Verify all supplied client identifiers against one unique live DHCP lease."""
+    import asyncio
     import ipaddress
 
     if not data.ip_address and not data.mac_address:
@@ -70,18 +71,28 @@ async def _resolve_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOM
     unavailable_routers = []
     matches = []
     expired_matches = []
-    for router in routers:
+
+    # Keep the multi-router scan bounded while avoiding a serial relay roundtrip
+    # for every configured router. A partial scan still fails closed below.
+    semaphore = asyncio.Semaphore(4)
+
+    async def fetch_router_leases(router: dict) -> tuple[dict, list]:
         router_id = str(router["_id"])
-        try:
-            leases = await service.get_dhcp_leases(router_id)
-        except Exception as exc:
-            unavailable_routers.append(router_id)
-            logger.warning(
-                "HotSpot DHCP lease lookup failed for router %s (%s)",
-                router_id,
-                type(exc).__name__,
-            )
-            continue
+        async with semaphore:
+            try:
+                return router, await service.get_dhcp_leases(router_id)
+            except Exception as exc:
+                unavailable_routers.append(router_id)
+                logger.warning(
+                    "HotSpot DHCP lease lookup failed for router %s (%s)",
+                    router_id,
+                    type(exc).__name__,
+                )
+                return router, []
+
+    router_leases = await asyncio.gather(*(fetch_router_leases(router) for router in routers))
+    for router, leases in router_leases:
+        router_id = str(router["_id"])
         for lease in leases:
             lease_ip = str(lease.get("address") or "")
             lease_mac = (lease.get("mac_address") or "").replace("-", ":").upper()

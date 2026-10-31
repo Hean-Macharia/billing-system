@@ -84,34 +84,7 @@ function getDefaultApiBase() {
       return `${hours} Hours`;
     }
 
-    async function api(path, opts = {}) {
-      let res;
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        res = await fetch(`${API_BASE_URL}${path}`, {
-          method: opts.method || 'GET',
-          headers: {
-            ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
-            ...(opts.headers || {}),
-          },
-          body: opts.body ? JSON.stringify(opts.body) : undefined,
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-      } catch (cause) {
-        const error = new Error(`Cannot reach the billing API at ${API_BASE_URL}. Check that the backend is running and allows this frontend address.`);
-        error.cause = cause;
-        throw error;
-      }
-      const body = await res.json().catch(() => null);
-      if (!res.ok) {
-        const error = new Error(body?.message || `Request failed (${res.status})`);
-        error.status = res.status;
-        throw error;
-      }
-      return body;
-    }
+    const api = PortalApiRequest.createApiRequest(() => API_BASE_URL);
 
     async function attestCurrentHotspotDevice() {
       const status = document.getElementById('device-identification-status');
@@ -431,7 +404,12 @@ function getDefaultApiBase() {
         deviceStatus.dataset.verified = 'false';
         deviceStatus.dataset.state = 'verifying';
         try {
-          const response = await api('/api/v1/hotspot/devices/lookup', { method: 'POST', body: payload });
+          const response = await api('/api/v1/hotspot/devices/lookup', {
+            method: 'POST',
+            body: payload,
+            timeoutMs: 30000,
+            timeoutMessage: 'The MikroTik device check did not finish within 30 seconds. The router or relay may be slow; retry shortly.',
+          });
           if (sequence !== deviceLookupSequence) return;
           setVerified(response.data);
         } catch (error) {

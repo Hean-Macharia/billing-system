@@ -1,3 +1,4 @@
+import asyncio
 from bson import ObjectId
 import pytest
 
@@ -177,3 +178,27 @@ async def test_no_configured_routers_returns_unavailable():
             hotspot.HotspotDeviceLookupRequest(mac_address="AA:BB:CC:DD:EE:FF"),
             FakeDatabase([]),
         )
+
+
+@pytest.mark.asyncio
+async def test_router_scans_run_concurrently_with_a_bounded_limit(monkeypatch):
+    routers = [router(f"Router {index}", f"site-{index}") for index in range(7)]
+    active = 0
+    peak = 0
+
+    async def get_leases(_service, _router_id):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return []
+
+    monkeypatch.setattr(hotspot.RouterService, "get_dhcp_leases", get_leases)
+    with pytest.raises(NotFoundError):
+        await hotspot._resolve_hotspot_device(
+            hotspot.HotspotDeviceLookupRequest(mac_address="AA:BB:CC:DD:EE:FF"),
+            FakeDatabase(routers),
+        )
+
+    assert 1 < peak <= 4
