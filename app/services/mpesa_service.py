@@ -11,6 +11,7 @@ Phase 5 responsibilities:
 """
 import asyncio
 import hashlib
+import re
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional
@@ -18,6 +19,7 @@ from typing import List, Optional
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings  # <-- added for credentials
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -48,6 +50,27 @@ class MpesaService:
             callback_url=settings.mpesa_callback_url,
             environment=settings.mpesa_environment,
         )
+
+    @staticmethod
+    def _normalize_receipt(value: object) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        receipt = value.strip().upper()
+        return receipt if re.fullmatch(r"[A-Z0-9]{4,32}", receipt) else None
+
+    async def _receipt_conflicts(self, tx_id: str, receipt: str) -> bool:
+        """Detect existing transaction or voucher ownership before settlement.
+
+        The partial unique transaction index is the concurrency backstop; this
+        check also prevents colliding with an independently generated voucher.
+        """
+        existing_tx = await self.collection.find_one({
+            "mpesa_receipt_number": {"$regex": f"^{re.escape(receipt)}$", "$options": "i"},
+            "_id": {"$ne": ObjectId(tx_id)},
+        })
+        if existing_tx:
+            return True
+        return bool(await self.db.vouchers.find_one({"voucher_code": receipt}))
 
     # ── STK PUSH INITIATION ──
 
@@ -233,6 +256,19 @@ class MpesaService:
     async def _settle_verified_success(self, doc: dict) -> MpesaTransactionInDB:
         """Claim and retry settlement for a provider-confirmed successful payment."""
         tx_id = str(doc["_id"])
+        if doc.get("transaction_type") == "hotspot_purchase" and not self._normalize_receipt(
+            doc.get("mpesa_receipt_number")
+        ):
+            await self.collection.update_one(
+                {"_id": ObjectId(tx_id), "settled": {"$ne": True}},
+                {"$set": {
+                    "settlement_review_required": True,
+                    "settlement_status": "review_required",
+                    "settlement_error": "Verified HotSpot payment has no usable receipt number",
+                    "updated_at": datetime.now(timezone.utc),
+                }},
+            )
+            return await self.get_by_id(tx_id)
         now = datetime.now(timezone.utc)
         claim = await self.collection.find_one_and_update(
             {
@@ -280,14 +316,18 @@ class MpesaService:
                     claim["phone_number"],
                 )
         except Exception as exc:
-            logger.error("M-Pesa settlement failed for tx %s: %s", tx_id, exc)
+            safe_error = exc.message if isinstance(exc, ConflictError) else type(exc).__name__
+            logger.error(
+                "M-Pesa settlement failed",
+                extra={"event": "mpesa_settlement_failed", "exception_class": type(exc).__name__},
+            )
             await self.collection.update_one(
                 {"_id": ObjectId(tx_id), "settlement_status": "processing"},
                 {
                     "$set": {
                         "settled": False,
                         "settlement_status": "failed",
-                        "settlement_error": str(exc),
+                        "settlement_error": safe_error,
                         "updated_at": datetime.now(timezone.utc),
                     }
                 },
@@ -377,30 +417,82 @@ class MpesaService:
                     doc["callback_verification_pending"] = False
                     return MpesaTransactionInDB(**doc)
                 receipt = values.get("MpesaReceiptNumber")
-                mpesa_receipt = str(receipt) if receipt is not None else None
+                mpesa_receipt = self._normalize_receipt(receipt)
                 transaction_date = values.get("TransactionDate")
                 mpesa_date = str(transaction_date) if transaction_date is not None else None
 
+        if status == MpesaTransactionStatus.SUCCESS and doc.get("transaction_type") == "hotspot_purchase":
+            if not mpesa_receipt:
+                await self.collection.update_one(
+                    {"_id": ObjectId(tx_id), "callback_received": {"$ne": True}},
+                    {"$set": {
+                        "status": MpesaTransactionStatus.SUCCESS.value,
+                        "result_code": result_code,
+                        "result_desc": "Payment was confirmed, but receipt details need support review.",
+                        "callback_received": True,
+                        "callback_verification_pending": False,
+                        "settlement_review_required": True,
+                        "settlement_status": "review_required",
+                        "settlement_error": "Verified HotSpot payment did not include a valid receipt number",
+                        "updated_at": datetime.now(timezone.utc),
+                    }},
+                )
+                return await self.get_by_id(tx_id)
+            if await self._receipt_conflicts(tx_id, mpesa_receipt):
+                await self.collection.update_one(
+                    {"_id": ObjectId(tx_id), "callback_received": {"$ne": True}},
+                    {"$set": {
+                        "status": MpesaTransactionStatus.SUCCESS.value,
+                        "result_code": result_code,
+                        "result_desc": "Payment was confirmed, but receipt ownership needs support review.",
+                        "callback_received": True,
+                        "callback_verification_pending": False,
+                        "settlement_review_required": True,
+                        "settlement_status": "review_required",
+                        "settlement_error": "M-Pesa receipt is already associated with another record",
+                        "updated_at": datetime.now(timezone.utc),
+                    }},
+                )
+                return await self.get_by_id(tx_id)
+
         now = datetime.now(timezone.utc)
-        updated_doc = await self.collection.find_one_and_update(
-            {
-                "_id": ObjectId(tx_id),
-                "callback_received": {"$ne": True},
-            },
-            {
-                "$set": {
+        try:
+            updated_doc = await self.collection.find_one_and_update(
+                {
+                    "_id": ObjectId(tx_id),
+                    "callback_received": {"$ne": True},
+                },
+                {
+                    "$set": {
+                        "status": status.value,
+                        "result_code": result_code,
+                        "result_desc": provider_result.get("ResultDesc", ""),
+                        "mpesa_receipt_number": mpesa_receipt,
+                        "mpesa_transaction_date": mpesa_date,
+                        "callback_received": True,
+                        "callback_verification_pending": False,
+                        "updated_at": now,
+                    },
+                },
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError:
+            # A concurrent callback for another checkout claimed this receipt.
+            await self.collection.update_one(
+                {"_id": ObjectId(tx_id), "callback_received": {"$ne": True}},
+                {"$set": {
                     "status": status.value,
                     "result_code": result_code,
-                    "result_desc": provider_result.get("ResultDesc", ""),
-                    "mpesa_receipt_number": mpesa_receipt,
-                    "mpesa_transaction_date": mpesa_date,
+                    "result_desc": "Payment was confirmed, but receipt ownership needs support review.",
                     "callback_received": True,
                     "callback_verification_pending": False,
+                    "settlement_review_required": True,
+                    "settlement_status": "review_required",
+                    "settlement_error": "M-Pesa receipt is already associated with another transaction",
                     "updated_at": now,
-                },
-            },
-            return_document=ReturnDocument.AFTER,
-        )
+                }},
+            )
+            return await self.get_by_id(tx_id)
         if not updated_doc:
             latest_doc = await self.collection.find_one({"_id": ObjectId(tx_id)})
             if not latest_doc:
@@ -543,6 +635,7 @@ class MpesaService:
         device_mac: str,
         trusted_site_id: Optional[str] = None,
         trusted_router_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> MpesaTransactionInDB:
         plan = await self.db.hotspot_plans.find_one({"_id": ObjectId(plan_id)})
         if not plan:
@@ -559,6 +652,30 @@ class MpesaService:
         if bool(trusted_site_id) != bool(trusted_router_id):
             raise ValidationError("Trusted router and site context must be provided together")
 
+        normalized_mac = device_mac.replace("-", ":").upper()
+        if idempotency_key:
+            prior = await self.collection.find_one({
+                "transaction_type": "hotspot_purchase",
+                "purchase_idempotency_key": idempotency_key,
+            })
+            if prior:
+                matches_request = (
+                    str(prior.get("hotspot_plan_id")) == str(plan_id)
+                    and str(prior.get("phone_number")) == str(phone_number)
+                    and str(prior.get("device_mac", "")).replace("-", ":").upper() == normalized_mac
+                    and str(prior.get("device_type")) == str(device_type)
+                    and str(prior.get("site_id") or "") == str(trusted_site_id or plan_site_id or "")
+                    and str(prior.get("router_id") or "") == str(trusted_router_id or "")
+                )
+                if not matches_request:
+                    raise ConflictError("This checkout key was already used for a different purchase")
+                if not prior.get("checkout_request_id"):
+                    raise ConflictError("This payment request is still being reconciled. Do not submit it again yet")
+                if prior.get("status") in {MpesaTransactionStatus.FAILED.value, MpesaTransactionStatus.CANCELLED.value}:
+                    raise ConflictError("This payment attempt cannot be retried with the same checkout key")
+                prior["_id"] = str(prior["_id"])
+                return MpesaTransactionInDB(**prior)
+
         now = datetime.now(timezone.utc)
         doc = {
             "transaction_type": "hotspot_purchase",
@@ -567,8 +684,9 @@ class MpesaService:
             "hotspot_plan_id": plan_id,
             "site_id": trusted_site_id or plan_site_id,
             "router_id": trusted_router_id,
+            "purchase_idempotency_key": idempotency_key,
             "voucher_code": None,
-            "device_type": device_type, "device_mac": device_mac.replace("-", ":").upper(),
+            "device_type": device_type, "device_mac": normalized_mac,
             "amount": plan["price"], "phone_number": phone_number,
             "account_reference": plan["name"], "transaction_desc": f"HotSpot: {plan['name']}",
             "status": MpesaTransactionStatus.PENDING.value,
@@ -578,7 +696,18 @@ class MpesaService:
             "payment_id": None, "settled": False, "settlement_error": None,
             "created_at": now, "updated_at": now,
         }
-        result = await self.collection.insert_one(doc)
+        try:
+            result = await self.collection.insert_one(doc)
+        except DuplicateKeyError:
+            if not idempotency_key:
+                raise
+            prior = await self.collection.find_one({"purchase_idempotency_key": idempotency_key})
+            if not prior:
+                raise
+            if not prior.get("checkout_request_id"):
+                raise ConflictError("This payment request is still being reconciled. Do not submit it again yet")
+            prior["_id"] = str(prior["_id"])
+            return MpesaTransactionInDB(**prior)
         doc["_id"] = str(result.inserted_id)
         tx = MpesaTransactionInDB(**doc)
 
@@ -615,6 +744,8 @@ class MpesaService:
         purchased plan and attach its code to the transaction so the
         captive portal's status-poll endpoint can hand it back."""
         try:
+            if not self._normalize_receipt(mpesa_receipt):
+                raise ConflictError("A verified M-Pesa receipt is required before issuing HotSpot access")
             from app.models.notification import NotificationType
             from app.services.notification_service import NotificationService
             from app.services.voucher_service import VoucherService
@@ -628,6 +759,7 @@ class MpesaService:
                 device_type=doc.get("device_type", ""),
                 site_id=doc.get("site_id") if "site_id" in doc else VoucherService.USE_PLAN_SITE,
                 router_id=doc.get("router_id"),
+                access_code=self._normalize_receipt(mpesa_receipt),
             )
             voucher_code = voucher["voucher_code"]
 
@@ -638,7 +770,7 @@ class MpesaService:
 
             await NotificationService(self.db).notify(
                 subject="HotSpot voucher purchased",
-                body=f"Thank you for your payment of KES {amount:,.2f}. Your HotSpot code is {voucher_code}. Enjoy your connection!",
+                body=f"Thank you for your confirmed payment of KES {amount:,.2f}. Your M-Pesa receipt is {voucher_code}; use it as your WiFi access token. Enjoy your connection!",
                 phone=phone_number, notification_type=NotificationType.VOUCHER_PURCHASED,
             )
             logger.info("HotSpot purchase settled: transaction=%s", tx_id)
@@ -742,6 +874,48 @@ class MpesaService:
             raise NotFoundError("Transaction not found")
         doc["_id"] = str(doc["_id"])
         return MpesaTransactionInDB(**doc)
+
+    async def resolve_hotspot_receipt(
+        self, receipt: str, phone_number: Optional[str] = None
+    ) -> tuple[MpesaTransactionInDB, dict]:
+        """Resolve a customer-facing receipt only to a fully settled voucher."""
+        normalized = self._normalize_receipt(receipt)
+        if not normalized:
+            raise NotFoundError("No completed HotSpot purchase was found for that receipt")
+        receipt_query = {
+            "transaction_type": "hotspot_purchase",
+            "mpesa_receipt_number": {"$regex": f"^{re.escape(normalized)}$", "$options": "i"},
+        }
+        if await self.collection.count_documents(receipt_query) != 1:
+            raise NotFoundError("No completed HotSpot purchase was found for that receipt")
+        tx = await self.collection.find_one(receipt_query)
+        if not tx:
+            raise NotFoundError("No completed HotSpot purchase was found for that receipt")
+        if phone_number and str(tx.get("phone_number")) != str(phone_number):
+            raise NotFoundError("No completed HotSpot purchase was found for those details")
+        if (
+            tx.get("status") != MpesaTransactionStatus.SUCCESS.value
+            or tx.get("settled") is not True
+            or tx.get("settlement_status") != "completed"
+            or tx.get("callback_received") is not True
+            or tx.get("settlement_review_required") is True
+            or not tx.get("voucher_code")
+        ):
+            raise ConflictError("This payment is not ready for reconnection. Do not pay again; contact support if it remains pending.")
+        voucher = await self.db.vouchers.find_one({
+            "voucher_code": tx["voucher_code"],
+            "purchase_transaction_id": str(tx["_id"]),
+        })
+        if not voucher or voucher.get("status") not in {"active", "used"}:
+            raise ConflictError("The access linked to this receipt is inactive or unavailable")
+        expiry = voucher.get("expiry_date")
+        if expiry:
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry <= datetime.now(timezone.utc):
+                raise ConflictError("The package linked to this receipt has expired")
+        tx["_id"] = str(tx["_id"])
+        return MpesaTransactionInDB(**tx), voucher
 
     async def list_transactions(
         self,

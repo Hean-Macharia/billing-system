@@ -30,6 +30,19 @@ class HotspotPurchaseRequest(BaseModel):
     device_type: Literal["this_device", "tv", "other"]
     device_mac: str = Field(..., pattern=r"(?i)^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$")
     ip_address: Optional[str] = None
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+        description="Stable per checkout attempt key; reused only when retrying the same request.",
+    )
+
+
+class HotspotReconnectRequest(BaseModel):
+    """Resolve a confirmed M-Pesa receipt to the paid device's voucher."""
+    receipt: str = Field(..., min_length=4, max_length=32, pattern=r"^[A-Za-z0-9]+$")
+    phone_number: Optional[str] = Field(default=None, pattern=r"^254[0-9]{9}$")
 
 
 class HotspotDeviceAttestationRequest(BaseModel):

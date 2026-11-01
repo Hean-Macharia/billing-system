@@ -80,3 +80,34 @@ async def test_hotspot_purchase_retry_returns_one_device_bound_voucher():
         "purchase_transaction_id": "transaction-123",
     }) == 1
     client.close()
+
+
+@pytest.mark.asyncio
+async def test_paid_purchase_can_use_verified_receipt_as_radius_voucher_username():
+    client = AsyncMongoMockClient(tz_aware=True)
+    db = client["hotspot_receipt_voucher_test"]
+    plan_id = ObjectId()
+    await db.hotspot_plans.insert_one({
+        "_id": plan_id,
+        "name": "Receipt bundle",
+        "duration_hours": 1,
+        "data_allowance_mb": None,
+        "rate_limit": "1M/1M",
+        "max_devices": 1,
+        "price": 5,
+        "currency": "KES",
+    })
+    voucher = await VoucherService(db).create_hotspot_purchase_voucher(
+        purchase_transaction_id="paid-tx-1",
+        plan_id=str(plan_id),
+        device_mac="AA:BB:CC:DD:EE:FF",
+        device_type="this_device",
+        site_id="site-1",
+        router_id="router-1",
+        access_code="UK1G00O1RX",
+    )
+    assert voucher["voucher_code"] == "UK1G00O1RX"
+    assert voucher["purchase_transaction_id"] == "paid-tx-1"
+    assert voucher["authorized_macs"] == ["AA:BB:CC:DD:EE:FF"]
+    assert await db.vouchers.find_one({"voucher_code": "UK1G00O1RX"})
+    client.close()

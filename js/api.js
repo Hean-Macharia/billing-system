@@ -68,19 +68,24 @@ export const getPortalPackages = (contextToken = getHotspotContext()) => api.get
   { auth: false, headers: contextToken ? { 'X-Hotspot-Context': contextToken } : {} },
 );
 
-export const startMpesaCheckout = (packageId, phone, deviceType, deviceMac, ipAddress, contextToken = getHotspotContext()) => api.post(
+export const startMpesaCheckout = (packageId, phone, deviceType, deviceMac, ipAddress, contextToken = getHotspotContext(), idempotencyKey) => api.post(
   API.portal.purchase,
   {
     plan_id: packageId,
     phone_number: phone,
     device_type: deviceType,
     device_mac: deviceMac,
+    ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
     ...(ipAddress ? { ip_address: ipAddress } : {}),
   },
   { auth: false, timeoutMs: 70000, headers: contextToken ? { 'X-Hotspot-Context': contextToken } : {} },
 );
 
-export const pollCheckoutStatus = (ref) => api.get(`${API.portal.status}/${encodeURIComponent(ref)}`, {}, { auth: false });
+export const pollCheckoutStatus = (ref, contextToken = getHotspotContext()) => api.get(
+  `${API.portal.status}/${encodeURIComponent(ref)}`,
+  {},
+  { auth: false, headers: contextToken ? { 'X-Hotspot-Context': contextToken } : {} },
+);
 export const verifyVoucher = (code) => api.get(`${API.portal.voucherCheck}/${encodeURIComponent(code)}`, {}, { auth: false });
 export const checkVoucherBalance = async () => { throw new Error('Voucher balance details are not available in the current billing API.'); };
 export const sendAdvertiseEnquiry = async () => { throw new Error('Advertising enquiries are not available online yet. Please contact support.'); };

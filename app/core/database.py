@@ -147,6 +147,21 @@ INDEXES = {
     # ✅ M-Pesa transactions
     "mpesa_transactions": [
         {"keys": [("checkout_request_id", 1)], "unique": True, "sparse": True},
+        {
+            "keys": [("mpesa_receipt_number", 1)],
+            "unique": True,
+            "partialFilterExpression": {"mpesa_receipt_number": {"$type": "string"}},
+            "critical": True,
+        },
+        {
+            "keys": [("purchase_idempotency_key", 1)],
+            "unique": True,
+            "partialFilterExpression": {
+                "transaction_type": "hotspot_purchase",
+                "purchase_idempotency_key": {"$type": "string"},
+            },
+            "critical": True,
+        },
         {"keys": [("customer_id", 1)]},
         {"keys": [("invoice_id", 1)], "sparse": True},
         {"keys": [("status", 1)]},
@@ -298,10 +313,25 @@ class Database:
             for index in indexes:
                 try:
                     keys = index["keys"]
-                    options = {name: value for name, value in index.items() if name != "keys"}
+                    critical = bool(index.get("critical"))
+                    options = {name: value for name, value in index.items() if name not in {"keys", "critical"}}
                     await collection.create_index(keys, **options)
                 except Exception as e:
-                    logger.warning(f"Index creation warning for {collection_name}: {e}")
+                    if critical:
+                        logger.warning(
+                            "Required index creation failed for %s (%s)",
+                            collection_name,
+                            type(e).__name__,
+                        )
+                        logger.critical(
+                            "Required HotSpot payment uniqueness index could not be established; startup must fail closed"
+                        )
+                        raise
+                    logger.warning(
+                        "Index creation warning for %s (%s)",
+                        collection_name,
+                        type(e).__name__,
+                    )
         logger.info("Database indexes created/verified")
 
 

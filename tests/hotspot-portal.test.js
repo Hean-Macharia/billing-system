@@ -25,6 +25,52 @@ test('HotSpot package verification is single-flight, cancellable, and guards sta
   assert.match(app, /REQUEST_ABORTED/);
 });
 
+test('paid purchase waits for completed settlement, displays the receipt, then submits HTTP-CHAP automatically', () => {
+  const app = fs.readFileSync(require.resolve('../hotspot/js/app.js'), 'utf8');
+  assert.match(app, /settled === true && access_token && login_username/);
+  assert.match(app, /M-Pesa receipt and access token/);
+  assert.match(app, /voucherLoginMarkup\(loginUsername, \{ autoSubmit: true \}\)/);
+  assert.match(app, /loginForm\.requestSubmit\(\)/);
+  assert.match(app, /X-Hotspot-Context': readHotspotContext\(\)/);
+  assert.match(app, /router will open your original destination after acceptance/);
+  assert.doesNotMatch(app, /YOU ARE CONNECTED|You’re connected/);
+});
+
+test('receipt reconnect calls the backend with opaque trusted context and never starts payment', () => {
+  const app = fs.readFileSync(require.resolve('../hotspot/js/app.js'), 'utf8');
+  assert.match(app, /api\('\/api\/v1\/hotspot\/reconnect'/);
+  assert.match(app, /'X-Hotspot-Context': context/);
+  assert.match(app, /Already paid\? Reconnect/);
+  const reconnect = app.slice(app.indexOf('async function openReceiptReconnect'), app.indexOf('function openBalanceCheck'));
+  assert.doesNotMatch(reconnect, /\/api\/v1\/hotspot\/purchase['"`]/);
+  assert.match(reconnect, /No new payment was started/);
+});
+
+test('root checkout also requires attestation and submits its existing CHAP login after settled payment', () => {
+  const portal = fs.readFileSync(require.resolve('../js/portal.js'), 'utf8');
+  const html = fs.readFileSync(require.resolve('../index.html'), 'utf8');
+  const purchase = portal.slice(portal.indexOf('function openPurchaseSheet'), portal.indexOf('function showWaitingScreen'));
+  assert.match(portal, /\/api\/v1\/hotspot\/devices\/attest/);
+  assert.match(purchase, /X-Hotspot-Context/);
+  assert.doesNotMatch(purchase, /\/api\/v1\/hotspot\/devices\/lookup/);
+  assert.match(portal, /settled === true && access_token && login_username/);
+  assert.match(portal, /loginForm\.requestSubmit\(\)/);
+  assert.match(portal, /X-Hotspot-Context': readHotspotContext\(\)/);
+  assert.match(html, /id="connect-receipt"/);
+  assert.doesNotMatch(portal, /You’re connected!/);
+});
+
+test('standalone payment status waits for settled backend confirmation before login', () => {
+  const status = fs.readFileSync(require.resolve('../frontend/js/payment-status.js'), 'utf8');
+  const api = fs.readFileSync(require.resolve('../frontend/js/api.js'), 'utf8');
+  assert.match(status, /data\.settled === true && data\.access_token && data\.login_username/);
+  assert.match(status, /dz_hotspot_context/);
+  assert.match(status, /createLoginSubmission\(redirect, username\)/);
+  assert.match(status, /form\.requestSubmit\(\)/);
+  assert.match(api, /X-Hotspot-Context/);
+  assert.doesNotMatch(status, /You’re connected!/);
+});
+
 test('parses MikroTik redirect parameters without hardcoding the router address', () => {
   const redirect = parseRedirectParameters(
     `?link-login-only=http%3A%2F%2F192.168.89.1%2Flogin&link-orig=https%3A%2F%2Fexample.com%2F&chap-id=00&chap-challenge=${challenge}`,

@@ -14,6 +14,7 @@ test('RouterOS login template forwards all captive parameters without rewriting 
     ['chap-challenge', '$(chap-challenge)'],
     ['client_ip', '$(ip)'],
     ['client_mac', '$(mac)'],
+    ['router_error', '$(error)'],
   ]) {
     assert.match(template, new RegExp(`name="${name}" value="${variable.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
   }

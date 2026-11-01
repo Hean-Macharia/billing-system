@@ -15,6 +15,7 @@ from app.schemas.portal import (
     HotspotDeviceAttestationRequest,
     HotspotDeviceLookupRequest,
     HotspotPurchaseRequest,
+    HotspotReconnectRequest,
     HotspotTrialRequest,
 )
 from app.services.hotspot_attestation_service import HotspotAttestationService
@@ -308,6 +309,7 @@ async def purchase_hotspot_voucher(
         device_mac=trusted_context.client_mac,
         trusted_site_id=trusted_context.site_id,
         trusted_router_id=trusted_context.router_id,
+        idempotency_key=data.idempotency_key,
     )
     return success_response(
         message="STK push sent - check your phone",
@@ -317,14 +319,125 @@ async def purchase_hotspot_voucher(
 
 
 @router.get("/purchase/status/{checkout_request_id}", response_model=dict)
-async def purchase_status(checkout_request_id: str, db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Public status polling for a completed or pending HotSpot purchase."""
+async def purchase_status(
+    checkout_request_id: str,
+    response: Response,
+    hotspot_context: Optional[str] = Header(default=None, alias="X-Hotspot-Context"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Return checkout state only to the same short-lived trusted device context."""
     from app.services.mpesa_service import MpesaService
     service = MpesaService(db)
     tx = await service.get_by_checkout_id(checkout_request_id)
+    if not hotspot_context:
+        raise ConflictError("Secure device context is required to check this purchase")
+    trusted = await HotspotAttestationService(db).get_context(hotspot_context)
+    if not trusted:
+        raise ConflictError("The trusted WiFi context is missing or expired. Reopen the WiFi sign-in page")
+    normalized_mac = str(getattr(trusted, "client_mac", "")).replace("-", ":").upper()
+    transaction_mac = str(getattr(tx, "device_mac", "")).replace("-", ":").upper()
+    if (
+        not tx.router_id
+        or not tx.site_id
+        or str(tx.router_id) != str(trusted.router_id)
+        or str(tx.site_id) != str(trusted.site_id)
+        or not transaction_mac
+        or transaction_mac != normalized_mac
+    ):
+        raise ConflictError("This purchase does not belong to the currently verified WiFi device")
+    settled = (
+        tx.status.value == "success"
+        and tx.settled is True
+        and tx.settlement_status == "completed"
+        and tx.callback_received is True
+        and tx.settlement_review_required is not True
+    )
+    voucher = None
+    if settled and tx.voucher_code:
+        voucher = await db.vouchers.find_one({
+            "voucher_code": tx.voucher_code,
+            "purchase_transaction_id": tx.id,
+        }, {"expiry_date": 1})
+    expires_at = voucher.get("expiry_date") if voucher else None
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     return success_response(
         message="Purchase status retrieved",
-        data={"status": tx.status.value, "voucher_code": tx.voucher_code, "result_desc": tx.result_desc},
+        data={
+            "status": tx.status.value,
+            "settled": settled,
+            "settlement_review_required": tx.settlement_review_required,
+            "access_token": tx.mpesa_receipt_number if settled else None,
+            "login_username": tx.voucher_code if settled else None,
+            # Kept for compatibility with previously shipped portal builds.
+            "voucher_code": tx.voucher_code if settled else None,
+            "package_name": tx.account_reference if settled else None,
+            "amount": tx.amount if settled else None,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+            "result_desc": tx.result_desc,
+        },
+    )
+
+
+@router.post("/reconnect", response_model=dict)
+async def reconnect_hotspot_purchase(
+    data: HotspotReconnectRequest,
+    response: Response,
+    hotspot_context: Optional[str] = Header(default=None, alias="X-Hotspot-Context"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Resolve a confirmed receipt, re-attest this device, and return its RADIUS username."""
+    if not hotspot_context:
+        raise ConflictError("Secure device verification is required before reconnecting")
+    attestation = HotspotAttestationService(db)
+    trusted = await attestation.get_context(hotspot_context)
+    if not trusted:
+        raise ConflictError("The trusted hotspot context is missing or expired. Reopen the Wi-Fi sign-in page")
+
+    from app.services.mpesa_service import MpesaService
+    transaction, voucher = await MpesaService(db).resolve_hotspot_receipt(
+        data.receipt,
+        phone_number=data.phone_number,
+    )
+    if str(transaction.router_id or "") != trusted.router_id or str(transaction.site_id or "") != trusted.site_id:
+        raise ConflictError("This receipt belongs to a different verified Wi-Fi site")
+    if str(voucher.get("router_id") or "") != trusted.router_id or str(voucher.get("site_id") or "") != trusted.site_id:
+        raise ConflictError("The paid access record does not match this verified Wi-Fi site")
+
+    normalized_mac = trusted.client_mac.replace("-", ":").upper()
+    authorized = {
+        str(mac).replace("-", ":").upper()
+        for mac in (voucher.get("authorized_macs") or [])
+        if mac
+    }
+    primary = voucher.get("bound_mac") or voucher.get("calling_station_id")
+    if primary:
+        authorized.add(str(primary).replace("-", ":").upper())
+    if normalized_mac not in authorized:
+        slots = voucher.get("available_device_slots")
+        if slots is None:
+            max_devices = max(1, int(voucher.get("max_devices") or 1))
+            slots = max(0, max_devices - len(authorized))
+        if int(slots) <= 0:
+            raise ConflictError("This receipt has reached its allowed device limit")
+
+    await attestation.attest_purchase_device(
+        raw_token=hotspot_context,
+        device_type="this_device",
+        client_ip=trusted.client_ip,
+        client_mac=trusted.client_mac,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return success_response(
+        message="Paid access verified; submitting the MikroTik login",
+        data={
+            "verified": True,
+            "access_token": transaction.mpesa_receipt_number,
+            "login_username": transaction.voucher_code,
+            "expires_at": voucher.get("expiry_date").isoformat() if voucher.get("expiry_date") else None,
+            "package_name": transaction.account_reference,
+        },
     )
 
 

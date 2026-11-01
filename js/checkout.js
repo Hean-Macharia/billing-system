@@ -1,4 +1,3 @@
-import { API } from './api.config.js';
 import { getPortalPackages, startMpesaCheckout, attestHotspotDevice, getHotspotContext, setHotspotContext, api } from './api.js';
 import { $, formatCurrency, esc } from './ui.js';
 
@@ -6,8 +5,6 @@ const params = new URLSearchParams(location.search);
 const packageId = params.get('pkg');
 const summary = $('#package-summary');
 const form = $('#checkout-form');
-const targetFields = $('#target-device-fields');
-const macInput = $('#mac');
 const deviceMessage = $('#device-message');
 const errorBox = $('#checkout-error');
 const payButton = $('#pay-button');
@@ -20,10 +17,25 @@ const captiveIp = params.get('ip') || params.get('client_ip') || params.get('add
 const captiveMac = params.get('mac') || params.get('client_mac') || params.get('mac-address') || params.get('calling_station_id') || '';
 let selectedDevice = 'this_device';
 let verifiedMac = '';
-let verifiedDevice = null;
-let deviceLookupSequence = 0;
 let plan = null;
 let trustedContextToken = getHotspotContext();
+let purchaseIdempotencyKey = '';
+
+function getOrCreatePurchaseKey(packageId) {
+  try {
+    const raw = sessionStorage.getItem('dz_hotspot_purchase_key');
+    const saved = raw ? JSON.parse(raw) : null;
+    if (saved?.packageId === packageId && /^[A-Za-z0-9._:-]{16,128}$/.test(saved.key || '')) return saved.key;
+    if (!globalThis.crypto?.getRandomValues) return '';
+    const bytes = new Uint8Array(24);
+    globalThis.crypto.getRandomValues(bytes);
+    const value = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    sessionStorage.setItem('dz_hotspot_purchase_key', JSON.stringify({ packageId, key: value }));
+    return value;
+  } catch {
+    return '';
+  }
+}
 
 async function initializeTrustedContext() {
   if (!captiveIp && !captiveMac) return trustedContextToken;
@@ -34,8 +46,16 @@ async function initializeTrustedContext() {
   }
   try {
     const response = api.data(await attestHotspotDevice(captiveIp, captiveMac));
-    trustedContextToken = response?.context_token || '';
+    if (
+      response?.verified !== true
+      || typeof response.context_token !== 'string'
+      || !/^[A-Za-z0-9_-]{32,128}$/.test(response.context_token)
+      || !Number.isInteger(response.expires_at)
+      || response.expires_at <= Math.floor(Date.now() / 1000)
+    ) throw new Error('The billing service returned an invalid or expired device context.');
+    trustedContextToken = response.context_token;
     setHotspotContext(trustedContextToken);
+    try { sessionStorage.setItem('dz_hotspot_context', trustedContextToken); } catch { /* session-only */ }
   } catch {
     trustedContextToken = '';
     setHotspotContext('');
@@ -43,68 +63,25 @@ async function initializeTrustedContext() {
   return trustedContextToken;
 }
 
-async function verifyDevice(payload) {
-  const sequence = ++deviceLookupSequence;
-  verifiedMac = '';
-  verifiedDevice = null;
-  deviceMessage.className = 'field-help';
-  deviceMessage.dataset.state = 'verifying';
-  deviceMessage.textContent = 'Verifying device against the MikroTik DHCP lease…';
-  try {
-    const response = api.data(await api.post(API.portal.deviceLookup, payload, { auth: false }));
-    if (sequence !== deviceLookupSequence) return;
-    if (response.verification_status !== 'verified' || !response.router_id || !response.mac_address) {
-      throw new Error('The router did not return a complete DHCP verification result.');
-    }
-    verifiedDevice = response;
-    verifiedMac = String(response.mac_address).replaceAll('-', ':').toUpperCase();
-    if (selectedDevice !== 'this_device') macInput.value = verifiedMac;
+async function identifyCurrentDevice() {
+  deviceMessage.dataset.state = 'identifying';
+  deviceMessage.textContent = 'Verifying this device with the trusted router attestation…';
+  if (trustedContextToken && captiveIp && captiveMac) {
+    verifiedMac = String(captiveMac).replaceAll('-', ':').toUpperCase();
     deviceMessage.className = 'field-help success-text';
     deviceMessage.dataset.state = 'verified';
-    deviceMessage.textContent = `Device verified on ${response.router_name || 'this Wi-Fi network'}${response.site_id ? ` · site ${response.site_id}` : ''}.`;
-  } catch (error) {
-    if (sequence !== deviceLookupSequence) return;
-    verifiedDevice = null;
-    verifiedMac = '';
-    deviceMessage.className = 'field-help error-text';
-    deviceMessage.dataset.state = 'failed';
-    deviceMessage.textContent = `Device verification failed: ${error.message}`;
+    deviceMessage.textContent = 'This device was verified by the billing service against its approved MikroTik router.';
+    return;
   }
-}
-
-function identifyCurrentDevice() {
-  deviceLookupSequence += 1;
-  targetFields.hidden = true;
-  macInput.required = false;
-  deviceMessage.dataset.state = 'identifying';
-  deviceMessage.textContent = 'Identifying this device from the MikroTik captive redirect…';
-  if (captiveIp && captiveMac) return verifyDevice({ ip_address: captiveIp, mac_address: captiveMac });
-  if (captiveIp) return verifyDevice({ ip_address: captiveIp });
-  if (captiveMac) return verifyDevice({ mac_address: captiveMac });
+  if (captiveIp && captiveMac) {
+    trustedContextToken = await initializeTrustedContext();
+    if (trustedContextToken) return identifyCurrentDevice();
+  }
   verifiedMac = '';
-  verifiedDevice = null;
   deviceMessage.className = 'field-help error-text';
   deviceMessage.dataset.state = 'failed';
-  deviceMessage.textContent = 'Device details were not provided by the hotspot. Reconnect to DevZen Wi-Fi and reopen its sign-in page to continue.';
+  deviceMessage.textContent = 'Device verification is unavailable. Reopen this checkout from the MikroTik WiFi sign-in page; purchases require trusted router verification.';
 }
-
-function identifyOtherDevice() {
-  deviceLookupSequence += 1;
-  targetFields.hidden = false;
-  macInput.required = true;
-  macInput.value = '';
-  verifiedMac = '';
-  verifiedDevice = null;
-  deviceMessage.className = 'field-help';
-  deviceMessage.textContent = 'Connect the selected device to this Wi-Fi, enter its MAC address, then verify it.';
-}
-
-macInput.addEventListener('input', () => {
-  deviceLookupSequence += 1;
-  verifiedMac = '';
-  verifiedDevice = null;
-  deviceMessage.dataset.state = 'identifying';
-});
 
 try {
   trustedContextToken = await initializeTrustedContext();
@@ -124,7 +101,7 @@ try {
       <span>Up to ${esc(plan.max_devices || 1)} device(s)</span>
     </div>`;
   payButton.textContent = `Pay ${formatCurrency(plan.price)} with M-Pesa`;
-  identifyCurrentDevice();
+  await identifyCurrentDevice();
 } catch (error) {
   summary.textContent = error.message;
   payButton.disabled = true;
@@ -132,25 +109,15 @@ try {
 
 document.querySelectorAll('[data-device]').forEach((choice) => {
   choice.addEventListener('click', () => {
-    selectedDevice = choice.dataset.device;
-    deviceTypeInput.value = selectedDevice;
+    // Until secure device pairing is supported by the backend, purchases are
+    // limited to the client that was independently attested on this router.
+    selectedDevice = 'this_device';
+    deviceTypeInput.value = 'this_device';
     document.querySelectorAll('[data-device]').forEach((item) => {
       item.classList.toggle('active', item === choice);
       item.setAttribute('aria-pressed', String(item === choice));
     });
-    if (selectedDevice === 'this_device') identifyCurrentDevice();
-    else identifyOtherDevice();
   });
-});
-
-$('#verify-device').addEventListener('click', () => {
-  const mac = macInput.value.trim();
-  if (!mac) {
-    deviceMessage.className = 'field-help error-text';
-    deviceMessage.textContent = 'Enter the connected target device’s MAC address.';
-    return;
-  }
-  verifyDevice({ mac_address: mac });
 });
 
 phoneInput.addEventListener('input', (event) => {
@@ -167,9 +134,12 @@ form.addEventListener('submit', async (event) => {
     return;
   }
   if (!verifiedMac) {
-    errorBox.textContent = selectedDevice === 'this_device'
-      ? 'Reconnect through the DevZen Wi-Fi sign-in page so this device can be verified.'
-      : 'Verify the connected target device before continuing.';
+    errorBox.textContent = 'Reconnect through the DevZen WiFi sign-in page so this device can be verified.';
+    errorBox.hidden = false;
+    return;
+  }
+  if (!trustedContextToken) {
+    errorBox.textContent = 'Secure router verification is required before payment.';
     errorBox.hidden = false;
     return;
   }
@@ -177,7 +147,9 @@ form.addEventListener('submit', async (event) => {
   payButton.disabled = true;
   payButton.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Sending STK prompt…';
   try {
-    const response = api.data(await startMpesaCheckout(packageId, `254${phone}`, selectedDevice, verifiedMac, verifiedDevice?.ip_address, trustedContextToken));
+    if (!purchaseIdempotencyKey) purchaseIdempotencyKey = getOrCreatePurchaseKey(packageId);
+    if (!purchaseIdempotencyKey) throw new Error('Secure checkout is unavailable in this browser.');
+    const response = api.data(await startMpesaCheckout(packageId, `254${phone}`, selectedDevice, verifiedMac, captiveIp, trustedContextToken, purchaseIdempotencyKey));
     const next = new URLSearchParams(location.search);
     next.set('ref', response.checkout_request_id);
     location.href = `/payment-status.html?${next}`;

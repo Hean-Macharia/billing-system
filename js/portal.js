@@ -38,7 +38,7 @@ function getDefaultApiBase() {
       try { return sessionStorage.getItem(HOTSPOT_CONTEXT_KEY) || ''; } catch { return ''; }
     }
 
-    function voucherLoginMarkup(voucherCode) {
+    function voucherLoginMarkup(voucherCode, options = {}) {
       if (!CAPTIVE_REDIRECT.ok) {
         const message = CAPTIVE_REDIRECT.message
           || 'Voucher verified, but no MikroTik login URL was provided. Open the WiFi login page again to connect.';
@@ -49,12 +49,13 @@ function getDefaultApiBase() {
       const fields = Object.entries(submission.fields)
         .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`)
         .join('');
+      const formId = options.autoSubmit ? 'paid-router-login-form' : '';
       return `
-        <form action="${escapeHtml(submission.action)}" method="${submission.method}">
+        <form ${formId ? `id="${formId}"` : ''} action="${escapeHtml(submission.action)}" method="${submission.method}">
           ${fields}
-          <button class="btn btn-primary" type="submit">Connect to WiFi</button>
+          <button class="btn btn-primary" type="submit">${options.autoSubmit ? 'Connect now' : 'Connect to WiFi'}</button>
         </form>
-        <p>Your voucher is verified. Internet access starts only after MikroTik accepts this login through RADIUS.</p>
+        <p>${options.autoSubmit ? 'Your paid login is being submitted to MikroTik. Internet access starts only after the router accepts this login through RADIUS.' : 'Your voucher is verified. Internet access starts only after MikroTik accepts this login through RADIUS.'}</p>
         ${CAPTIVE_REDIRECT.message ? `<p>${escapeHtml(CAPTIVE_REDIRECT.message)}</p>` : ''}`;
     }
 
@@ -90,7 +91,15 @@ function getDefaultApiBase() {
       return request(path, { method: opts.method || 'GET', body: opts.body, headers: opts.headers || {}, auth: false });
     }
 
+    let attestationJob = null;
     async function attestCurrentHotspotDevice() {
+      if (attestationJob) return attestationJob;
+      attestationJob = attestCurrentHotspotDeviceOnce();
+      try { return await attestationJob; }
+      finally { attestationJob = null; }
+    }
+
+    async function attestCurrentHotspotDeviceOnce() {
       if (!CLIENT_IP || !CLIENT_MAC) {
         saveHotspotContext('');
         return '';
@@ -100,7 +109,13 @@ function getDefaultApiBase() {
           method: 'POST',
           body: { ip_address: CLIENT_IP, mac_address: CLIENT_MAC },
         });
-        const token = result?.data?.context_token || '';
+        const data = result?.data;
+        const token = data?.verified === true
+          && typeof data.context_token === 'string'
+          && /^[A-Za-z0-9_-]{32,128}$/.test(data.context_token)
+          && Number.isInteger(data.expires_at)
+          && data.expires_at > Math.floor(Date.now() / 1000)
+          ? data.context_token : '';
         saveHotspotContext(token);
         return token;
       } catch {
@@ -146,6 +161,7 @@ function getDefaultApiBase() {
       document.querySelector('.sheet-overlay')?.remove();
       const overlay = document.createElement('div');
       overlay.className = 'sheet-overlay';
+      overlay.dataset.purchaseKey = globalThis.crypto?.randomUUID?.() || '';
       overlay.innerHTML = `
         <div class="sheet" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
           <div class="sheet-header">
@@ -160,6 +176,74 @@ function getDefaultApiBase() {
         if (event.target === overlay) overlay.remove();
       });
       return overlay;
+    }
+
+    function normalizeKenyanPhone(value) {
+      let phone = String(value || '').replace(/\D/g, '');
+      if (phone.startsWith('0')) phone = `254${phone.slice(1)}`;
+      else if (phone.startsWith('7') || phone.startsWith('1')) phone = `254${phone}`;
+      return /^254(7|1)\d{8}$/.test(phone) ? phone : '';
+    }
+
+    async function openReceiptReconnect() {
+      const overlay = showResourceDialog('Already paid? Reconnect', `
+        <p>Enter the M-Pesa receipt from your confirmed payment. No new payment will be requested.</p>
+        <form id="receipt-reconnect-form">
+          <label for="reconnect-receipt">M-Pesa receipt / access token</label>
+          <input id="reconnect-receipt" maxlength="32" autocomplete="off" required>
+          <label for="reconnect-phone">Phone number (optional)</label>
+          <input id="reconnect-phone" type="tel" inputmode="numeric" placeholder="0712345678">
+          <div id="reconnect-error" class="error-text" role="status" aria-live="polite"></div>
+          <button id="reconnect-submit" class="btn btn-primary" type="submit">Verify and connect</button>
+        </form>`);
+      const form = overlay.querySelector('#receipt-reconnect-form');
+      const errorBox = overlay.querySelector('#reconnect-error');
+      const button = overlay.querySelector('#reconnect-submit');
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!CAPTIVE_REDIRECT.ok) {
+          errorBox.textContent = CAPTIVE_REDIRECT.message || 'Open the portal from the MikroTik WiFi sign-in page before reconnecting.';
+          return;
+        }
+        const receipt = form.elements['reconnect-receipt'].value.trim();
+        const rawPhone = form.elements['reconnect-phone'].value.trim();
+        const phone = rawPhone ? normalizeKenyanPhone(rawPhone) : '';
+        if (!/^[A-Za-z0-9]{4,32}$/.test(receipt) || (rawPhone && !phone)) {
+          errorBox.textContent = 'Enter a valid M-Pesa receipt and, if supplied, a valid Kenyan phone number.';
+          return;
+        }
+        button.disabled = true;
+        button.textContent = 'Verifying…';
+        errorBox.textContent = '';
+        try {
+          let context = readHotspotContext();
+          if (!context) context = await attestCurrentHotspotDevice();
+          if (!context) throw new Error('This device could not be verified on the connected router. Reopen the WiFi sign-in page.');
+          const response = await api('/api/v1/hotspot/reconnect', {
+            method: 'POST',
+            body: { receipt, ...(phone ? { phone_number: phone } : {}) },
+            headers: { 'X-Hotspot-Context': context },
+          });
+          const data = response?.data;
+          if (data?.verified !== true || typeof data.login_username !== 'string') throw new Error('The billing API returned an incomplete reconnect authorization.');
+          overlay.querySelector('.sheet-body').innerHTML = `
+            <div class="status-screen"><h3>Receipt verified</h3>
+            <p>Your paid access is being submitted to MikroTik. Do not pay again.</p>
+            <div class="voucher-box"><div class="code">${escapeHtml(data.access_token)}</div><div class="tap">M-Pesa receipt</div></div>
+            <p id="reconnect-progress" role="status" aria-live="polite">Submitting the HTTP-CHAP login…</p>
+            ${voucherLoginMarkup(data.login_username, { autoSubmit: true })}</div>`;
+          const loginForm = overlay.querySelector('#paid-router-login-form');
+          loginForm?.addEventListener('submit', () => {
+            const progress = overlay.querySelector('#reconnect-progress');
+            if (progress) progress.textContent = 'MikroTik is processing the login and will return you to the requested destination after acceptance.';
+          }, { once: true });
+          if (loginForm) window.setTimeout(() => loginForm.isConnected && loginForm.requestSubmit(), 500);
+        } catch (error) {
+          errorBox.textContent = error.message || 'The receipt could not be verified. No payment was initiated.';
+          button.disabled = false;
+          button.textContent = 'Verify and connect';
+        }
+      });
     }
 
     function openBalanceCheck() {
@@ -366,12 +450,8 @@ function getDefaultApiBase() {
             </div>
             <form id="buy-form">
               <label>Who are you buying access for?</label>
-              <div class="device-options" role="group" aria-label="Purchase device">
-                <button class="device-choice" type="button" data-device="this_device" aria-pressed="true">This device</button>
-                <button class="device-choice" type="button" data-device="tv" aria-pressed="false">TV</button>
-                <button class="device-choice" type="button" data-device="other" aria-pressed="false">Other device</button>
-              </div>
-              <div id="target-device-fields"></div>
+              <div class="device-options" role="group" aria-label="Purchase device"><button class="device-choice" type="button" data-device="this_device" aria-pressed="true">This device</button></div>
+              <p class="hint">Secure pairing for a different device is not available yet.</p>
               <div id="device-status" class="device-status" role="status" aria-live="polite"></div>
               <label for="phone-input">M-Pesa number</label>
               <input type="tel" id="phone-input" inputmode="numeric" placeholder="0712345678" required />
@@ -391,111 +471,38 @@ function getDefaultApiBase() {
 
       let selectedDevice = 'this_device';
       let verifiedMac = '';
-      let verifiedDevice = null;
-      let deviceLookupSequence = 0;
-      const targetFields = overlay.querySelector('#target-device-fields');
       const deviceStatus = overlay.querySelector('#device-status');
       const normalizeMac = (mac) => String(mac || '').replace(/-/g, ':').toUpperCase();
-      const setVerified = (device) => {
-        if (device?.verification_status !== 'verified' || !device.mac_address || !device.router_id) {
-          throw new Error('The router did not return a complete DHCP verification result.');
-        }
-        verifiedDevice = device;
-        verifiedMac = normalizeMac(device.mac_address);
-        deviceStatus.textContent = `Device verified on ${device.router_name || 'the hotspot'}${device.site_id ? ` · site ${device.site_id}` : ''}.`;
-        deviceStatus.dataset.verified = 'true';
-        deviceStatus.dataset.state = 'verified';
-      };
-      const verifyByLookup = async (payload) => {
-        const sequence = ++deviceLookupSequence;
-        verifiedDevice = null;
-        deviceStatus.textContent = 'Verifying device against the MikroTik DHCP lease…';
-        deviceStatus.dataset.verified = 'false';
-        deviceStatus.dataset.state = 'verifying';
-        try {
-          const response = await api('/api/v1/hotspot/devices/lookup', { method: 'POST', body: payload });
-          if (sequence !== deviceLookupSequence) return;
-          setVerified(response.data);
-        } catch (error) {
-          if (sequence !== deviceLookupSequence) return;
-          verifiedMac = '';
-          verifiedDevice = null;
-          deviceStatus.textContent = `Device verification failed: ${error.message}`;
-          deviceStatus.dataset.state = 'failed';
-        }
-      };
-      const renderDeviceFields = () => {
-        deviceLookupSequence += 1;
-        verifiedMac = '';
-        verifiedDevice = null;
-        deviceStatus.dataset.verified = 'false';
-        deviceStatus.dataset.state = 'identifying';
-        if (selectedDevice === 'this_device') {
-          deviceStatus.textContent = 'Identifying this device from the MikroTik captive redirect…';
-          if (CLIENT_MAC) {
-            verifyByLookup({ ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {}), mac_address: CLIENT_MAC });
-          } else {
-            targetFields.replaceChildren();
-            if (CLIENT_IP) {
-              verifyByLookup({ ip_address: CLIENT_IP });
-            } else {
-              deviceStatus.textContent = 'Device verification failed: reconnect through the DevZen Wi-Fi sign-in page so MikroTik can provide this device’s address.';
-              deviceStatus.dataset.state = 'failed';
-            }
-          }
-        } else if (selectedDevice === 'tv') {
-          targetFields.innerHTML = '<label for="target-device-id">TV MAC address</label><div class="input-with-action"><input type="text" id="target-device-id" placeholder="TV MAC address" required/><button type="button" id="verify-device">Verify</button></div>';
-          targetFields.querySelector('#verify-device').onclick = () => {
-            const value = targetFields.querySelector('#target-device-id').value.trim();
-            verifyByLookup({ mac_address: value });
-          };
-        } else {
-          targetFields.innerHTML = '<label for="target-device-id">Device MAC address</label><div class="input-with-action"><input type="text" id="target-device-id" placeholder="Device MAC address" required/><button type="button" id="verify-device">Verify</button></div>';
-          targetFields.querySelector('#verify-device').onclick = () => {
-            const value = targetFields.querySelector('#target-device-id').value.trim();
-            verifyByLookup({ mac_address: value });
-          };
-        }
-        targetFields.querySelectorAll('input').forEach((input) => {
-          input.addEventListener('input', () => {
-            deviceLookupSequence += 1;
-            verifiedMac = '';
-            verifiedDevice = null;
-            deviceStatus.dataset.verified = 'false';
-            deviceStatus.dataset.state = 'identifying';
-            deviceStatus.textContent = '';
-          });
-        });
-      };
+      const context = readHotspotContext();
+      const verified = Boolean(context && CLIENT_MAC);
+      verifiedMac = verified ? normalizeMac(CLIENT_MAC) : '';
+      deviceStatus.dataset.verified = String(verified);
+      deviceStatus.dataset.state = verified ? 'verified' : 'failed';
+      deviceStatus.textContent = verified
+        ? 'This device has trusted router verification. Verification is repeated before purchase.'
+        : 'Reopen the portal from the MikroTik captive login so the router can verify this device.';
       overlay.querySelectorAll('[data-device]').forEach((choice) => {
         choice.addEventListener('click', () => {
-          selectedDevice = choice.dataset.device;
-          overlay.querySelectorAll('[data-device]').forEach((button) => {
-            button.setAttribute('aria-pressed', String(button === choice));
-          });
-          renderDeviceFields();
+          selectedDevice = 'this_device';
+          overlay.querySelectorAll('[data-device]').forEach((button) => button.setAttribute('aria-pressed', String(button === choice)));
         });
       });
-      renderDeviceFields();
 
       overlay.querySelector('#buy-form').addEventListener('submit', async (event) => {
         event.preventDefault();
-        const phoneInput = document.getElementById('phone-input');
+        const phoneInput = overlay.querySelector('#phone-input');
         const errBox = document.getElementById('buy-error');
         const submitBtn = document.getElementById('buy-submit');
         errBox.style.display = 'none';
 
-        if (!verifiedMac || deviceStatus.dataset.verified !== 'true') {
+        if (!readHotspotContext() || !verifiedMac || deviceStatus.dataset.verified !== 'true') {
           errBox.textContent = 'Verify the device before payment.';
           errBox.style.display = 'block';
           return;
         }
 
-        let raw = phoneInput.value.trim();
-        let phone = raw.replace(/\D/g, '');
-        if (phone.startsWith('0')) phone = '254' + phone.slice(1);
-        else if (phone.startsWith('7') || phone.startsWith('1')) phone = '254' + phone;
-        if (!/^254(7|1)\d{8}$/.test(phone)) {
+        const phone = normalizeKenyanPhone(phoneInput.value.trim());
+        if (!phone) {
           errBox.textContent = 'Enter a valid Safaricom number, e.g. 0712345678';
           errBox.style.display = 'block';
           return;
@@ -505,6 +512,12 @@ function getDefaultApiBase() {
         submitBtn.innerHTML = '<span class="spinner"></span>Sending request...';
 
         try {
+          if (!overlay.dataset.purchaseKey) {
+            if (!globalThis.crypto?.getRandomValues) throw new Error('Secure checkout is unavailable in this browser.');
+            const bytes = new Uint8Array(24);
+            globalThis.crypto.getRandomValues(bytes);
+            overlay.dataset.purchaseKey = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+          }
           const res = await api('/api/v1/hotspot/purchase', {
             method: 'POST',
             body: {
@@ -512,9 +525,10 @@ function getDefaultApiBase() {
               phone_number: phone,
               device_type: selectedDevice,
               device_mac: verifiedMac,
-              ...(verifiedDevice?.ip_address ? { ip_address: verifiedDevice.ip_address } : {})
+              ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {}),
+              idempotency_key: overlay.dataset.purchaseKey || globalThis.crypto.randomUUID(),
             },
-            headers: readHotspotContext() ? { 'X-Hotspot-Context': readHotspotContext() } : {},
+            headers: { 'X-Hotspot-Context': readHotspotContext() },
           });
           showWaitingScreen(overlay, res.data.checkout_request_id);
         } catch (error) {
@@ -537,52 +551,83 @@ function getDefaultApiBase() {
       `;
 
       let attempts = 0;
+      let polling = false;
       const poll = setInterval(async () => {
+        if (polling) return;
+        polling = true;
         attempts += 1;
         try {
-          const res = await api(`/api/v1/hotspot/purchase/status/${checkoutRequestId}`);
-          const { status, voucher_code, result_desc } = res.data || {};
+          const res = await api(`/api/v1/hotspot/purchase/status/${encodeURIComponent(checkoutRequestId)}`, {
+            headers: { 'X-Hotspot-Context': readHotspotContext() },
+          });
+          const { status, settled, settlement_review_required, access_token, login_username, result_desc } = res.data || {};
 
-          if (status === 'success' && voucher_code) {
+          if (status === 'success' && settled === true && access_token && login_username) {
             clearInterval(poll);
-            showSuccessScreen(sheet, voucher_code);
+            showSuccessScreen(sheet, { accessToken: access_token, loginUsername: login_username, result: res.data });
+          } else if (status === 'success' && settlement_review_required) {
+            clearInterval(poll);
+            showPendingReviewScreen(sheet, result_desc || 'Your payment was confirmed, but the receipt needs support review. Do not pay again.');
           } else if (['failed', 'cancelled', 'timeout'].includes(status)) {
             clearInterval(poll);
             showFailScreen(sheet, result_desc || 'The payment was not completed.');
           } else if (attempts >= 30) {
             clearInterval(poll);
-            showFailScreen(sheet, 'We did not get a payment confirmation in time. Please contact support.');
+            showStillPendingScreen(sheet, checkoutRequestId);
           }
         } catch (error) {
           if (attempts >= 30) {
             clearInterval(poll);
-            showFailScreen(sheet, 'Connection lost while checking your payment status.');
+            showStillPendingScreen(sheet, checkoutRequestId, error.message);
           }
+        } finally {
+          polling = false;
         }
       }, 3000);
     }
 
-    function showSuccessScreen(sheet, voucherCode) {
+    function showSuccessScreen(sheet, purchase) {
+      const { accessToken, loginUsername, result } = purchase;
       sheet.innerHTML = `
         <div class="status-screen">
           <div class="status-icon success">${Icons.check}</div>
-          <h3>Payment complete</h3>
-          <p>Your voucher is ready. Use it to sign in to the WiFi network.</p>
+          <h3>Payment confirmed</h3>
+          <p>${escapeHtml(result.package_name || 'Your internet package')} is ready. M-Pesa receipt and access token:</p>
           <div class="voucher-box" id="voucher-copy">
-            <div class="code">${escapeHtml(voucherCode)}</div>
+            <div class="code">${escapeHtml(accessToken)}</div>
             <div class="tap">Tap to copy</div>
           </div>
-          ${voucherLoginMarkup(voucherCode)}
-          <button class="btn btn-primary" id="done-btn">Done</button>
+          <p id="router-login-progress" role="status" aria-live="polite">Submitting your paid login to MikroTik…</p>
+          ${voucherLoginMarkup(loginUsername, { autoSubmit: true })}
+          <p>If automatic sign-in does not finish, tap “Connect now”. Do not pay again.</p>
         </div>
       `;
 
       document.getElementById('voucher-copy').onclick = () => {
-        navigator.clipboard?.writeText(voucherCode);
+        navigator.clipboard?.writeText(accessToken);
         const tap = document.querySelector('.voucher-box .tap');
         if (tap) tap.textContent = 'Copied!';
       };
-      document.getElementById('done-btn').onclick = () => document.querySelector('.sheet-overlay')?.remove();
+      const loginForm = document.getElementById('paid-router-login-form');
+      loginForm?.addEventListener('submit', () => {
+        const progress = document.getElementById('router-login-progress');
+        if (progress) progress.textContent = 'MikroTik is processing the login. The router will open your original destination after acceptance.';
+      }, { once: true });
+      if (loginForm && CAPTIVE_REDIRECT.ok) window.setTimeout(() => loginForm.isConnected && loginForm.requestSubmit(), 700);
+      else {
+        const progress = document.getElementById('router-login-progress');
+        if (progress) progress.textContent = 'Payment is confirmed. Reopen this page from the WiFi sign-in screen to submit the router login.';
+      }
+    }
+
+    function showStillPendingScreen(sheet, checkoutRequestId, detail = '') {
+      sheet.innerHTML = `<div class="status-screen"><h3>Payment confirmation is still pending</h3><p>${escapeHtml(detail || 'Do not pay again. Safaricom may still be processing the payment callback.')}</p><button class="btn btn-primary" id="continue-status-check">Continue checking</button><button class="btn btn-ghost" id="close-pending">Close</button></div>`;
+      sheet.querySelector('#close-pending').onclick = () => document.querySelector('.sheet-overlay')?.remove();
+      sheet.querySelector('#continue-status-check').onclick = () => showWaitingScreen(document.querySelector('.sheet-overlay'), checkoutRequestId);
+    }
+
+    function showPendingReviewScreen(sheet, detail) {
+      sheet.innerHTML = `<div class="status-screen"><h3>Payment received</h3><p>${escapeHtml(detail)}</p><p>Contact ${escapeHtml(SUPPORT_PHONE)}. Do not pay again.</p></div>`;
     }
 
     function showFailScreen(sheet, message) {
@@ -645,9 +690,14 @@ function getDefaultApiBase() {
 
     checkBackend();
     loadPlans();
+    document.getElementById('connect-receipt')?.addEventListener('click', openReceiptReconnect);
     document.getElementById('free-trial').addEventListener('click', openFreeTrial);
     if (CAPTIVE_REDIRECT.state === 'invalid') {
       document.getElementById('router-login-notice').textContent = CAPTIVE_REDIRECT.message;
+    }
+    const routerLoginError = PORTAL_PARAMS.get('router_error') || PORTAL_PARAMS.get('error') || '';
+    if (routerLoginError) {
+      document.getElementById('router-login-notice').textContent = `MikroTik login was not accepted: ${routerLoginError}`;
     }
     const clientIp = CLIENT_IP;
     if (clientIp) document.getElementById('client-ip').textContent = clientIp;

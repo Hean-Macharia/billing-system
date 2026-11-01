@@ -15,7 +15,7 @@ from typing import List, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo.errors import BulkWriteError
+from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
@@ -146,6 +146,7 @@ class VoucherService:
         device_type: str,
         site_id=USE_PLAN_SITE,
         router_id: Optional[str] = None,
+        access_code: Optional[str] = None,
     ) -> dict:
         """Create or retrieve the single voucher associated with a paid purchase."""
         existing = await self.vouchers.find_one(
@@ -161,6 +162,7 @@ class VoucherService:
                 {"_id": existing["_id"]},
                 {
                     "$set": {
+                        **({"voucher_code": access_code} if access_code else {}),
                         "bound_mac": device_mac,
                         "authorized_macs": authorized_macs,
                         "available_device_slots": available_slots,
@@ -173,6 +175,8 @@ class VoucherService:
             existing["authorized_macs"] = authorized_macs
             existing["available_device_slots"] = available_slots
             existing["device_type"] = device_type
+            if access_code:
+                existing["voucher_code"] = access_code
             return existing
 
         site_snapshot = site_id
@@ -234,6 +238,19 @@ class VoucherService:
         )
         if not voucher:
             raise ConflictError("Purchase voucher generation did not produce a voucher")
+
+        if access_code:
+            # For paid HotSpot purchases the provider-verified receipt is the
+            # actual RADIUS voucher username. Mongo's unique voucher_code
+            # index makes receipt assignment atomic against other vouchers.
+            try:
+                await self.vouchers.update_one(
+                    {"_id": voucher["_id"], "purchase_transaction_id": purchase_transaction_id},
+                    {"$set": {"voucher_code": access_code, "updated_at": datetime.now(timezone.utc)}},
+                )
+            except DuplicateKeyError as exc:
+                raise ConflictError("The verified M-Pesa receipt is already assigned to another access code") from exc
+            voucher["voucher_code"] = access_code
 
         await self.vouchers.update_one(
             {"_id": voucher["_id"]},
