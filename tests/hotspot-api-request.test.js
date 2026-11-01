@@ -57,6 +57,27 @@ test('keeps a real fetch failure distinct from a request timeout', async () => {
   });
 });
 
+test('distinguishes caller cancellation from a timeout', async () => {
+  const caller = new AbortController();
+  const api = createApiRequest(
+    () => 'https://billing.example.test',
+    (_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+      caller.abort();
+    }),
+  );
+
+  await assert.rejects(api('/api/v1/hotspot/devices/attest', { signal: caller.signal }), (error) => {
+    assert.equal(error.code, 'REQUEST_ABORTED');
+    assert.equal(error.code === 'REQUEST_TIMEOUT', false);
+    return true;
+  });
+});
+
 test('preserves backend HTTP errors instead of converting them to network errors', async () => {
   const api = createApiRequest(
     () => 'https://billing.example.test',

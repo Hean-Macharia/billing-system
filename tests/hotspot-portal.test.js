@@ -1,8 +1,29 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const test = require('node:test');
 const { createLoginSubmission, parseRedirectParameters } = require('../hotspot/mikrotik-login.js');
 
 const challenge = '0123456789abcdef0123456789abcdef';
+
+test('HotSpot checkout uses trusted attestation context rather than ambiguous DHCP lookup', () => {
+  const app = fs.readFileSync(require.resolve('../hotspot/js/app.js'), 'utf8');
+  const checkout = app.slice(app.indexOf('function openPurchaseSheet'), app.indexOf('function showWaitingScreen'));
+
+  assert.match(checkout, /const verifiedContextAvailable = Boolean\(readHotspotContext\(\)\)/);
+  assert.match(checkout, /X-Hotspot-Context/);
+  assert.doesNotMatch(checkout, /\/api\/v1\/hotspot\/devices\/lookup/);
+  assert.match(checkout, /Secure router verification is required before payment/);
+});
+
+test('HotSpot package verification is single-flight, cancellable, and guards stale results', () => {
+  const app = fs.readFileSync(require.resolve('../hotspot/js/app.js'), 'utf8');
+  assert.match(app, /if \(plansRequest\) return plansRequest/);
+  assert.match(app, /new AbortController\(\)/);
+  assert.match(app, /signal\.aborted/);
+  assert.match(app, /generation !== plansRequestGeneration/);
+  assert.match(app, /retry\.disabled = true/);
+  assert.match(app, /REQUEST_ABORTED/);
+});
 
 test('parses MikroTik redirect parameters without hardcoding the router address', () => {
   const redirect = parseRedirectParameters(

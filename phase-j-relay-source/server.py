@@ -5,16 +5,27 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import os
 import re
 import socket
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import routeros
+
+LOGGER = logging.getLogger("isp_relay")
+
 HOST = "127.0.0.1"
-PORT = 8765
-TOKEN_FILE = os.path.expanduser("~/.config/isp-relay/relay.token")
+PORT = int(os.environ.get("ISP_RELAY_PORT", "8765"))
+TOKEN_FILE = os.environ.get(
+    "ISP_RELAY_TOKEN_FILE", os.path.expanduser("~/.config/isp-relay/relay.token")
+)
+RELAY_ENV_FILE = os.environ.get(
+    "ISP_RELAY_ENV_FILE", os.path.expanduser("~/.config/isp-relay/relay.env")
+)
 
 MAX_BODY_SIZE = 16384
 MAX_REQUESTS_PER_MINUTE = 60
@@ -25,6 +36,14 @@ ATTESTATION_LIFETIME_SECONDS = 45
 ATTESTATION_MAX_REQUEST_AGE_SECONDS = 30
 ATTESTATION_FUTURE_TOLERANCE_SECONDS = 5
 ATTESTATION_CONCURRENCY = threading.BoundedSemaphore(4)
+
+
+class AttestationConfigurationError(RuntimeError):
+    """Required server-side router, site, or credential configuration is invalid."""
+
+
+class AttestationObservationError(RuntimeError):
+    """Router evidence cannot safely be used for an attestation."""
 
 ALLOWED_ACTIONS = {
     "system.identity",
@@ -81,9 +100,8 @@ def check_rate_limit(client_ip):
 
 def _relay_env_value(name):
     """Read one named non-secret value without logging other file contents."""
-    env_path = os.path.expanduser("~/.config/isp-relay/relay.env")
     try:
-        with open(env_path, "r", encoding="utf-8") as env_file:
+        with open(RELAY_ENV_FILE, "r", encoding="utf-8") as env_file:
             for line in env_file:
                 line = line.rstrip("\r\n")
                 if line.startswith(name + "="):
@@ -97,7 +115,7 @@ def load_router_password():
     """Preserve the existing relay.env credential source and behavior."""
     password = _relay_env_value("MIKROTIK_API_PASSWORD")
     if not password:
-        raise RuntimeError("Router credentials are not configured")
+        raise AttestationConfigurationError("Router credentials are not configured")
     return password
 
 
@@ -107,10 +125,10 @@ def load_router_password_for(router):
     if credential_env == "MIKROTIK_API_PASSWORD":
         return load_router_password()
     if not isinstance(credential_env, str) or not re.fullmatch(r"MIKROTIK_API_PASSWORD_[0-9A-F]{24}", credential_env):
-        raise RuntimeError("Router credentials are not configured")
+        raise AttestationConfigurationError("Router credentials are not configured")
     password = _relay_env_value(credential_env)
     if not password:
-        raise RuntimeError("Router credentials are not configured")
+        raise AttestationConfigurationError("Router credentials are not configured")
     return password
 
 
@@ -118,33 +136,33 @@ def _validate_allowlist_router(entry):
     """Validate one non-secret router/site entry from trusted relay config."""
     required = {"router_id", "site_id", "host", "port", "username", "enabled", "site_active"}
     if not isinstance(entry, dict) or set(entry) != required:
-        raise RuntimeError("Attestation router allowlist entry is invalid")
+        raise AttestationConfigurationError("Attestation router allowlist entry is invalid")
 
     router_id = entry.get("router_id")
     site_id = entry.get("site_id")
     if not isinstance(router_id, str) or not re.fullmatch(r"[0-9a-fA-F]{24}", router_id):
-        raise RuntimeError("Attestation router allowlist identity is invalid")
+        raise AttestationConfigurationError("Attestation router allowlist identity is invalid")
     if not isinstance(site_id, str) or not re.fullmatch(r"[0-9a-fA-F]{24}", site_id):
-        raise RuntimeError("Attestation router allowlist site is invalid")
+        raise AttestationConfigurationError("Attestation router allowlist site is invalid")
     if entry.get("enabled") is not True or entry.get("site_active") is not True:
-        raise RuntimeError("Attestation router/site mapping is disabled or inactive")
+        raise AttestationConfigurationError("Attestation router/site mapping is disabled or inactive")
 
     host = entry.get("host")
     if not isinstance(host, str) or len(host) > 64:
-        raise RuntimeError("Attestation router management target is invalid")
+        raise AttestationConfigurationError("Attestation router management target is invalid")
     try:
         address = ipaddress.ip_address(host)
     except ValueError as exc:
-        raise RuntimeError("Attestation router management target must be a configured IP address") from exc
+        raise AttestationConfigurationError("Attestation router management target must be a configured IP address") from exc
     if not address.is_private or address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified:
-        raise RuntimeError("Attestation router management target is not an approved private address")
+        raise AttestationConfigurationError("Attestation router management target is not an approved private address")
 
     port = entry.get("port")
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
-        raise RuntimeError("Attestation router management port is invalid")
+        raise AttestationConfigurationError("Attestation router management port is invalid")
     username = entry.get("username")
     if not isinstance(username, str) or not username or len(username) > 64:
-        raise RuntimeError("Attestation router API username is invalid")
+        raise AttestationConfigurationError("Attestation router API username is invalid")
 
     normalized_router_id = router_id.lower()
     return {
@@ -171,13 +189,13 @@ def load_attestation_routers():
         try:
             entries = json.loads(raw_registry)
         except (TypeError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Attestation router allowlist is malformed") from exc
+            raise AttestationConfigurationError("Attestation router allowlist is malformed") from exc
         if not isinstance(entries, list) or not entries or len(entries) > 64:
-            raise RuntimeError("Attestation router allowlist is empty or too large")
+            raise AttestationConfigurationError("Attestation router allowlist is empty or too large")
         routers = [_validate_allowlist_router(entry) for entry in entries]
         ids = [router["router_id"] for router in routers]
         if len(ids) != len(set(ids)):
-            raise RuntimeError("Attestation router allowlist contains duplicate identities")
+            raise AttestationConfigurationError("Attestation router allowlist contains duplicate identities")
         return routers
 
     router_id = _relay_env_value("ATTESTATION_ROUTER_ID")
@@ -185,11 +203,11 @@ def load_attestation_routers():
     router_enabled = _relay_env_value("ATTESTATION_ROUTER_ENABLED").lower()
     site_active = _relay_env_value("ATTESTATION_SITE_ACTIVE").lower()
     if not router_id or not site_id:
-        raise RuntimeError("Attestation router/site mapping is not configured")
+        raise AttestationConfigurationError("Attestation router/site mapping is not configured")
     if router_enabled != "true" or site_active != "true":
-        raise RuntimeError("Attestation router/site mapping is disabled or inactive")
+        raise AttestationConfigurationError("Attestation router/site mapping is disabled or inactive")
     if not re.fullmatch(r"[0-9a-fA-F]{24}", router_id) or not re.fullmatch(r"[0-9a-fA-F]{24}", site_id):
-        raise RuntimeError("Attestation router/site mapping is invalid")
+        raise AttestationConfigurationError("Attestation router/site mapping is invalid")
     import routeros
     return [{
         "router_id": router_id.lower(),
@@ -209,7 +227,7 @@ def load_attestation_router(router_id=None, site_id=None):
     if router_id is None and site_id is None and len(routers) == 1:
         return routers[0]
     if not isinstance(router_id, str) or not isinstance(site_id, str):
-        raise RuntimeError("Router and site identity are required for multi-router attestation")
+        raise AttestationConfigurationError("Router and site identity are required for multi-router attestation")
     matches = [
         router for router in routers
         if router["router_id"] == router_id.lower() and router["site_id"] == site_id.lower()
@@ -257,7 +275,7 @@ def _validate_attestation_request(request, router):
 
 def sign_attestation(attestation, relay_token):
     if not isinstance(relay_token, str) or len(relay_token) < 32:
-        raise RuntimeError("Relay signing key is not configured")
+        raise AttestationConfigurationError("Relay signing key is not configured")
     derived_key = hmac.new(
         relay_token.encode("utf-8"), ATTESTATION_DOMAIN, hashlib.sha256
     ).digest()
@@ -286,13 +304,13 @@ def create_attestation(request, router, observation, relay_token, now=None):
             raise ValueError("Router returned a non-private observed IP")
         client_ip = str(parsed_ip)
         if request["client_ip"] and client_ip != request["client_ip"]:
-            raise RuntimeError("Router observation does not match the requested IP")
+            raise AttestationObservationError("Router observation does not match the requested IP")
         if (
             evidence.get("dhcp_lease_match") is not True
             or str(evidence.get("dhcp_lease_status", "")).lower() != "bound"
             or evidence.get("hotspot_host_match") is not True
         ):
-            raise RuntimeError("Router observation evidence is incomplete")
+            raise AttestationObservationError("Router observation evidence is incomplete")
     elif client_ip is not None:
         try:
             parsed_ip = ipaddress.ip_address(client_ip)
@@ -302,7 +320,7 @@ def create_attestation(request, router, observation, relay_token, now=None):
             raise ValueError("Router returned a non-private negative-observation IP")
         client_ip = str(parsed_ip)
         if request["client_ip"] and client_ip != request["client_ip"]:
-            raise RuntimeError("Router negative observation identifies another IP")
+            raise AttestationObservationError("Router negative observation identifies another IP")
     else:
         # The current FastAPI verifier requires a syntactically valid client
         # IP even for signed negative observations. Bind the negative result to
@@ -329,7 +347,7 @@ def create_attestation(request, router, observation, relay_token, now=None):
     }
     age = attestation["evidence"]["observation_age_seconds"]
     if not isinstance(age, (int, float)) or isinstance(age, bool) or age < 0 or age > 15:
-        raise RuntimeError("Router observation is stale or has no trustworthy timestamp")
+        raise AttestationObservationError("Router observation is stale or has no trustworthy timestamp")
     return {"attestation": attestation, "signature": sign_attestation(attestation, relay_token)}
 
 
@@ -375,16 +393,40 @@ class RelayHandler(BaseHTTPRequestHandler):
             flush=True,
         )
 
+    def log_event(self, event, category, status, exception=None):
+        LOGGER.warning(
+            "event=%s category=%s http_status=%s correlation_id=%s exception_class=%s",
+            event,
+            category,
+            status,
+            getattr(self, "request_id", "unknown"),
+            type(exception).__name__ if exception else "none",
+            extra={
+                "event": event,
+                "category": category,
+                "http_status": status,
+                "request_id": getattr(self, "request_id", "unknown"),
+                "exception_class": type(exception).__name__ if exception else None,
+            },
+        )
+
     def send_json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if getattr(self, "request_id", None):
+            self.send_header("X-Correlation-ID", self.request_id)
         self.end_headers()
         self.wfile.write(body)
 
+    def set_request_id(self):
+        supplied = self.headers.get("X-Correlation-ID", "")
+        self.request_id = supplied if re.fullmatch(r"[a-fA-F0-9]{32}", supplied) else uuid.uuid4().hex
+
     def do_GET(self):
+        self.set_request_id()
         if self.path != "/health":
             self.send_json(404, {"success": False, "message": "Not found"})
             return
@@ -396,6 +438,7 @@ class RelayHandler(BaseHTTPRequestHandler):
         })
 
     def do_POST(self):
+        self.set_request_id()
         if self.path not in {"/api/v1/router/relay", "/api/v1/router/attest"}:
             self.send_json(404, {"success": False, "message": "Not found"})
             return
@@ -473,17 +516,51 @@ class RelayHandler(BaseHTTPRequestHandler):
                 return
             try:
                 result = handle_attestation(request, expected_token)
+                claims = result["attestation"]
+                LOGGER.info(
+                    "event=router_attestation_completed outcome=%s router_id=%s site_id=%s correlation_id=%s",
+                    "observed" if claims["observed"] else "not_observed",
+                    claims["router_id"],
+                    claims["site_id"],
+                    self.request_id,
+                    extra={
+                        "event": "router_attestation_completed",
+                        "outcome": "observed" if claims["observed"] else "not_observed",
+                        "router_id": claims["router_id"],
+                        "site_id": claims["site_id"],
+                        "request_id": self.request_id,
+                    },
+                )
                 self.send_json(200, result)
-            except PermissionError:
+            except routeros.RouterOSAuthenticationError as exc:
+                self.log_event("router_attestation_failed", "router_authentication_failed", 502, exc)
+                self.send_json(502, {"success": False, "message": "Router API authentication failed"})
+            except PermissionError as exc:
+                self.log_event("router_attestation_rejected", "router_site_not_allowlisted", 403, exc)
                 self.send_json(403, {"success": False, "message": "Requested router/site is not configured"})
-            except ValueError:
+            except ValueError as exc:
+                self.log_event("router_attestation_rejected", "invalid_request", 400, exc)
                 self.send_json(400, {"success": False, "message": "Invalid attestation request"})
-            except RuntimeError as exc:
-                message = str(exc)
-                status = 503 if "mapping" in message.lower() or "credential" in message.lower() or "signing" in message.lower() else 502
-                self.send_json(status, {"success": False, "message": "Router attestation could not be verified"})
-            except Exception:
+            except AttestationConfigurationError as exc:
+                self.log_event("router_attestation_failed", "invalid_configuration", 503, exc)
+                self.send_json(503, {"success": False, "message": "Router attestation is not configured"})
+            except AttestationObservationError as exc:
+                self.log_event("router_attestation_failed", "invalid_router_observation", 502, exc)
                 self.send_json(502, {"success": False, "message": "Router attestation could not be verified"})
+            except TimeoutError as exc:
+                self.log_event("router_attestation_failed", "router_timeout", 504, exc)
+                self.send_json(504, {"success": False, "message": "Router did not respond in time"})
+            except Exception as exc:
+                if isinstance(exc, routeros.RouterOSConnectionError) or isinstance(exc, OSError):
+                    category, status, message = "router_connection_failed", 502, "Router could not be reached"
+                elif isinstance(exc, routeros.RouterOSCommandError):
+                    category, status, message = "router_command_failed", 502, "Router observation command failed"
+                elif isinstance(exc, routeros.RouterOSObservationError):
+                    category, status, message = "invalid_router_observation", 502, "Router observation could not be verified"
+                else:
+                    category, status, message = "internal_attestation_error", 502, "Router attestation could not be verified"
+                self.log_event("router_attestation_failed", category, status, exc)
+                self.send_json(status, {"success": False, "message": message})
             finally:
                 ATTESTATION_CONCURRENCY.release()
             return
@@ -508,12 +585,9 @@ class RelayHandler(BaseHTTPRequestHandler):
         # Load the router credential without shell expansion or logging it.
         # Never accept arbitrary RouterOS command strings from HTTP callers.
         try:
-            env_path = os.path.expanduser(
-                "~/.config/isp-relay/relay.env"
-            )
             credential = ""
 
-            with open(env_path, "r", encoding="utf-8") as env_file:
+            with open(RELAY_ENV_FILE, "r", encoding="utf-8") as env_file:
                 for line in env_file:
                     line = line.rstrip("\r\n")
                     if line.startswith("MIKROTIK_API_PASSWORD="):
@@ -550,8 +624,9 @@ class RelayHandler(BaseHTTPRequestHandler):
                 "message": "Invalid router action parameters",
             })
 
-        except Exception:
+        except Exception as exc:
             # Keep credentials, network details, and tracebacks out of HTTP.
+            self.log_event("router_management_failed", "router_operation_failed", 502, exc)
             self.send_json(502, {
                 "success": False,
                 "message": "Router operation failed",
@@ -559,6 +634,10 @@ class RelayHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     load_token()
 
     server = ThreadingHTTPServer((HOST, PORT), RelayHandler)

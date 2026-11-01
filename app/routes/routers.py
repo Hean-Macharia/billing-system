@@ -1,4 +1,5 @@
 """Router (MikroTik) management API routes."""
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, status
@@ -51,6 +52,73 @@ def _router_to_response(r: dict) -> dict:
     }
 
 
+async def _router_diagnostics(router_doc: dict, db: AsyncIOMotorDatabase) -> dict:
+    """Expose non-secret relationship and cached-health diagnostics to admins."""
+    result = {}
+    site_id = router_doc.get("site_id")
+    site = None
+    if site_id:
+        site = await db.sites.find_one(RouterService._reference_filter(site_id), {"_id": 1, "status": 1})
+    if not site_id:
+        result["site_relationship_status"] = "unassigned"
+    elif not site:
+        result["site_relationship_status"] = "missing_site"
+    elif str(site.get("status") or "").lower() != "active":
+        result["site_relationship_status"] = "inactive_site"
+    else:
+        result["site_relationship_status"] = "active"
+
+    nas_id = router_doc.get("nas_client_id")
+    if not nas_id:
+        result["nas_relationship_status"] = "not_linked"
+    else:
+        nas = await db.nas_clients.find_one(RouterService._reference_filter(nas_id), {"_id": 1, "site_id": 1, "status": 1})
+        if not nas:
+            result["nas_relationship_status"] = "missing_nas"
+        elif str(nas.get("status") or "active").lower() != "active":
+            result["nas_relationship_status"] = "inactive_nas"
+        elif not nas.get("site_id"):
+            result["nas_relationship_status"] = "unassigned_nas_site"
+        else:
+            nas_site = await db.sites.find_one(RouterService._reference_filter(nas["site_id"]), {"_id": 1, "status": 1})
+            if not nas_site or str(nas_site.get("status") or "").lower() != "active":
+                result["nas_relationship_status"] = "invalid_nas_site"
+            elif not site or nas_site.get("_id") != site.get("_id"):
+                result["nas_relationship_status"] = "site_mismatch"
+            else:
+                result["nas_relationship_status"] = "valid"
+
+    checked_at = router_doc.get("last_checked_at")
+    if isinstance(checked_at, str):
+        try:
+            checked_at = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+        except ValueError:
+            checked_at = None
+    if not isinstance(checked_at, datetime):
+        result["health_freshness"] = "unknown"
+        result["health_age_seconds"] = None
+    else:
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.replace(tzinfo=timezone.utc)
+        age = max(0, int((datetime.now(timezone.utc) - checked_at).total_seconds()))
+        result["health_age_seconds"] = age
+        result["health_freshness"] = "fresh" if age <= 300 else "stale"
+    result["attestation_configuration_status"] = (
+        "eligible"
+        if router_doc.get("status") == "online"
+        and result["site_relationship_status"] == "active"
+        and result["nas_relationship_status"] in {"valid", "not_linked"}
+        else "ineligible"
+    )
+    return result
+
+
+async def _router_response_with_diagnostics(router_doc: dict, db: AsyncIOMotorDatabase) -> dict:
+    response = _router_to_response(router_doc)
+    response.update(await _router_diagnostics(router_doc, db))
+    return response
+
+
 # ── CRUD ──
 
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
@@ -62,7 +130,7 @@ async def create_router(
 ):
     service = RouterService(db)
     r = await service.create_router(data)
-    return success_response(message="Router registered", data=_router_to_response(r), status_code=201)
+    return success_response(message="Router registered", data=await _router_response_with_diagnostics(r, db), status_code=201)
 
 
 @router.get("", response_model=dict)
@@ -77,7 +145,7 @@ async def list_routers(
 ):
     service = RouterService(db)
     items, total = await service.list_routers(site_id=site_id, status=status, page=page, limit=limit)
-    return paginated_response(data=[_router_to_response(r) for r in items], total=total, page=page, limit=limit)
+    return paginated_response(data=[await _router_response_with_diagnostics(r, db) for r in items], total=total, page=page, limit=limit)
 
 
 @router.get("/{router_id}", response_model=dict)
@@ -89,7 +157,7 @@ async def get_router(
 ):
     service = RouterService(db)
     r = await service.get_router(router_id)
-    return success_response(message="Router retrieved", data=_router_to_response(r))
+    return success_response(message="Router retrieved", data=await _router_response_with_diagnostics(r, db))
 
 
 @router.patch("/{router_id}", response_model=dict)
@@ -102,7 +170,7 @@ async def update_router(
 ):
     service = RouterService(db)
     r = await service.update_router(router_id, data)
-    return success_response(message="Router updated", data=_router_to_response(r))
+    return success_response(message="Router updated", data=await _router_response_with_diagnostics(r, db))
 
 
 @router.delete("/{router_id}", response_model=dict)

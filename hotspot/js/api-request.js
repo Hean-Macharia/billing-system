@@ -7,6 +7,14 @@
     return async function api(path, options = {}) {
       const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 15000;
       const controller = new AbortController();
+      const externalSignal = options.signal;
+      let externallyAborted = Boolean(externalSignal?.aborted);
+      const abortFromCaller = () => {
+        externallyAborted = true;
+        controller.abort();
+      };
+      if (externalSignal?.aborted) abortFromCaller();
+      else externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       let response;
 
@@ -21,7 +29,14 @@
           signal: controller.signal,
         });
       } catch (cause) {
-        const timedOut = cause?.name === 'AbortError';
+        const aborted = cause?.name === 'AbortError' || controller.signal.aborted;
+        const timedOut = aborted && !externallyAborted;
+        if (externallyAborted) {
+          const error = new Error('The request was cancelled.');
+          error.code = 'REQUEST_ABORTED';
+          error.cause = cause;
+          throw error;
+        }
         const error = new Error(timedOut
           ? (options.timeoutMessage || `The billing API request timed out after ${Math.ceil(timeoutMs / 1000)} seconds. Please retry.`)
           : `Cannot reach the billing API at ${getBaseUrl()}. Check your connection and try again.`);
@@ -30,6 +45,7 @@
         throw error;
       } finally {
         clearTimeout(timeout);
+        externalSignal?.removeEventListener('abort', abortFromCaller);
       }
 
       const body = await response.json().catch(() => null);

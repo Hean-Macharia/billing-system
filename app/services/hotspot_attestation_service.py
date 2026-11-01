@@ -150,7 +150,7 @@ class HotspotAttestationService:
         )
         self.clock = clock
 
-    async def _candidate_routers(self) -> list[dict]:
+    async def _candidate_routers(self, correlation_id: Optional[str] = None) -> list[dict]:
         routers = await _rows(self.db.routers, {"status": "online"})
         if len(routers) > MAX_ROUTER_CANDIDATES:
             raise ServiceUnavailableError("Router context verification is unavailable for this router inventory")
@@ -160,11 +160,11 @@ class HotspotAttestationService:
             router_id = _id_text(router.get("_id")) or ""
             router_status = _status_text(router.get("status"))
             if router_status != "online":
-                self._log_candidate_exclusion(router_id or "missing", f"router_not_online:{router_status or 'missing'}")
+                self._log_candidate_exclusion(router_id or "missing", f"router_not_online:{router_status or 'missing'}", correlation_id)
                 continue
             parsed_router_id = _oid(router_id)
             if not parsed_router_id:
-                self._log_candidate_exclusion(router_id or "missing", "invalid_router_identity")
+                self._log_candidate_exclusion(router_id or "missing", "invalid_router_identity", correlation_id)
                 continue
             router_id = str(parsed_router_id)
             if router_id in router_ids:
@@ -177,25 +177,25 @@ class HotspotAttestationService:
 
             router_site = _id_text(router.get("site_id"))
             if not router_site:
-                self._log_candidate_exclusion(router_id, "missing_router_site_mapping")
+                self._log_candidate_exclusion(router_id, "missing_router_site_mapping", correlation_id)
                 continue
             nas_id = router.get("nas_client_id")
             if nas_id:
                 nas = await _find_by_id(self.db.nas_clients, nas_id)
                 if not nas or _status_text(nas.get("status") or "active") in {"inactive", "disabled"}:
-                    self._log_candidate_exclusion(router_id, "missing_or_inactive_nas_mapping")
+                    self._log_candidate_exclusion(router_id, "missing_or_inactive_nas_mapping", correlation_id)
                     continue
                 nas_site = _id_text(nas.get("site_id"))
                 if not nas_site:
-                    self._log_candidate_exclusion(router_id, "missing_nas_site_mapping")
+                    self._log_candidate_exclusion(router_id, "missing_nas_site_mapping", correlation_id)
                     continue
                 if router_site != nas_site:
-                    self._log_candidate_exclusion(router_id, "conflicting_router_nas_site_mapping")
+                    self._log_candidate_exclusion(router_id, "conflicting_router_nas_site_mapping", correlation_id)
                     continue
             site = await _find_by_id(self.db.sites, router_site)
             if not site or _status_text(site.get("status")) != "active":
                 reason = "missing_site_record" if not site else "site_inactive"
-                self._log_candidate_exclusion(router_id, reason)
+                self._log_candidate_exclusion(router_id, reason, correlation_id)
                 continue
             candidates.append({"router_id": router_id, "site_id": router_site, "doc": router})
         if not candidates:
@@ -205,13 +205,15 @@ class HotspotAttestationService:
         return candidates
 
     @staticmethod
-    def _log_candidate_exclusion(router_id: str, reason: str) -> None:
+    def _log_candidate_exclusion(router_id: str, reason: str, correlation_id: Optional[str] = None) -> None:
         logger.warning(
             "HotSpot attestation router candidate excluded",
             extra={
                 "event": "hotspot_router_candidate_excluded",
                 "router_id": router_id,
                 "reason": reason,
+                "correlation_id": correlation_id,
+                "stage": "candidate_selection",
             },
         )
 
@@ -240,6 +242,7 @@ class HotspotAttestationService:
         nonce: str,
         challenge: dict,
         reply: Any,
+        correlation_id: Optional[str] = None,
     ) -> dict:
         if not isinstance(reply, dict):
             raise ServiceUnavailableError("The router relay returned an invalid attestation")
@@ -286,6 +289,31 @@ class HotspotAttestationService:
             return_document=ReturnDocument.AFTER,
         )
         if not consumed:
+            now_dt = datetime.fromtimestamp(self.clock(), timezone.utc)
+            prior = await self.db.router_attestation_nonces.find_one(
+                {"nonce": nonce}, {"state": 1, "expires_at": 1}
+            )
+            prior_expiry = prior.get("expires_at") if prior else None
+            if isinstance(prior_expiry, datetime) and prior_expiry.tzinfo is None:
+                # Motor's default BSON decoder returns naive UTC datetimes.
+                prior_expiry = prior_expiry.replace(tzinfo=timezone.utc)
+            if not prior or not isinstance(prior_expiry, datetime) or prior_expiry <= now_dt:
+                nonce_result = "expired_or_unknown"
+            elif prior.get("state") == "consumed":
+                nonce_result = "replayed"
+            else:
+                nonce_result = "not_pending"
+            logger.warning(
+                "HotSpot attestation challenge was not consumed",
+                extra={
+                    "event": "hotspot_attestation_nonce_rejected",
+                    "nonce_result": nonce_result,
+                    "router_id": candidate["router_id"],
+                    "site_id": candidate["site_id"],
+                    "correlation_id": correlation_id,
+                    "stage": "nonce_consumption",
+                },
+            )
             raise ConflictError("The router verification challenge was already used or expired")
 
         return {
@@ -297,10 +325,13 @@ class HotspotAttestationService:
             "evidence": payload["evidence"],
         }
 
-    async def observe_device(self, client_ip: Optional[str], client_mac: str) -> TrustedRouterContext:
+    async def observe_device(
+        self, client_ip: Optional[str], client_mac: str, correlation_id: Optional[str] = None
+    ) -> TrustedRouterContext:
+        started = time.monotonic()
         normalized_ip = normalize_client_ip(client_ip) if client_ip else None
         normalized_mac = normalize_mac(client_mac)
-        candidates = await self._candidate_routers()
+        candidates = await self._candidate_routers(correlation_id=correlation_id)
         semaphore = asyncio.Semaphore(4)
 
         async def observe(candidate: dict) -> dict:
@@ -315,15 +346,47 @@ class HotspotAttestationService:
                     "requested_at": int(self.clock()),
                 }
                 try:
-                    reply = await self.relay.attest_hotspot_client(request)
+                    reply = await self.relay.attest_hotspot_client(request, correlation_id=correlation_id)
                 except RouterRelayError as exc:
                     if exc.status_code == 403:
                         self._log_candidate_exclusion(candidate["router_id"], "relay_router_site_not_allowlisted")
                         return {"observed": False, "candidate_rejected": True}
+                    logger.error(
+                        "Router relay candidate check failed",
+                        extra={
+                            "event": "hotspot_router_relay_failed",
+                            "router_id": candidate["router_id"],
+                            "site_id": candidate["site_id"],
+                            "relay_status": exc.status_code,
+                        "correlation_id": correlation_id or exc.correlation_id,
+                        "stage": "relay_observation",
+                        },
+                    )
                     raise ServiceUnavailableError("The authenticated router relay is unavailable") from exc
                 except Exception as exc:
+                    logger.error(
+                        "Router relay candidate check failed",
+                        extra={
+                            "event": "hotspot_router_relay_failed",
+                            "router_id": candidate["router_id"],
+                            "site_id": candidate["site_id"],
+                            "exception_class": type(exc).__name__,
+                        },
+                    )
                     raise ServiceUnavailableError("The authenticated router relay is unavailable") from exc
-                return await self._verify_relay_reply(candidate, nonce, challenge, reply)
+                verified = await self._verify_relay_reply(candidate, nonce, challenge, reply, correlation_id=correlation_id)
+                logger.info(
+                    "HotSpot router observation validated",
+                    extra={
+                        "event": "hotspot_router_observation_validated",
+                        "router_id": candidate["router_id"],
+                        "site_id": candidate["site_id"],
+                        "observed": verified["observed"],
+                        "correlation_id": correlation_id,
+                        "stage": "signed_observation_validated",
+                    },
+                )
+                return verified
 
         results = await asyncio.gather(
             *(observe(candidate) for candidate in candidates),
@@ -337,10 +400,33 @@ class HotspotAttestationService:
 
         matches = [item for item in results if item["observed"]]
         if len(matches) > 1:
+            logger.error(
+                "HotSpot device observation is ambiguous across routers",
+                extra={
+                    "event": "hotspot_router_observation_ambiguous",
+                    "router_ids": sorted(item["router_id"] for item in matches),
+                    "site_ids": sorted(item["site_id"] for item in matches),
+                    "match_count": len(matches),
+                    "correlation_id": correlation_id,
+                    "duration_ms": round((time.monotonic() - started) * 1000, 1),
+                    "stage": "uniqueness_check",
+                },
+            )
             raise ConflictError("This device was observed on multiple routers; contact support")
         if not matches and any(item.get("candidate_rejected") for item in results if isinstance(item, dict)):
             raise ServiceUnavailableError("The relay does not authorize every configured router/site candidate")
         if not matches:
+            logger.info(
+                "HotSpot trusted device observation completed without a matching client",
+                extra={
+                    "event": "hotspot_device_observation_complete",
+                    "outcome": "not_observed",
+                    "correlation_id": correlation_id,
+                    "candidate_count": len(candidates),
+                    "duration_ms": round((time.monotonic() - started) * 1000, 1),
+                    "stage": "final_result",
+                },
+            )
             raise NotFoundError("The router did not observe this client on an active HotSpot")
 
         match = matches[0]
@@ -356,6 +442,19 @@ class HotspotAttestationService:
             or age > 15
         ):
             raise NotFoundError("A current matching DHCP lease and HotSpot host were not confirmed")
+        logger.info(
+            "HotSpot trusted device observation completed",
+            extra={
+                "event": "hotspot_device_observation_complete",
+                "outcome": "verified",
+                "router_id": match["router_id"],
+                "site_id": match["site_id"],
+                "correlation_id": correlation_id,
+                "candidate_count": len(candidates),
+                "duration_ms": round((time.monotonic() - started) * 1000, 1),
+                "stage": "final_result",
+            },
+        )
         return TrustedRouterContext(
             router_id=match["router_id"],
             site_id=match["site_id"],
@@ -363,8 +462,10 @@ class HotspotAttestationService:
             client_mac=match["client_mac"],
         )
 
-    async def create_context(self, client_ip: str, client_mac: str) -> dict:
-        observation = await self.observe_device(client_ip, client_mac)
+    async def create_context(
+        self, client_ip: str, client_mac: str, correlation_id: Optional[str] = None
+    ) -> dict:
+        observation = await self.observe_device(client_ip, client_mac, correlation_id=correlation_id)
         raw_token = secrets.token_urlsafe(32)
         now = datetime.fromtimestamp(self.clock(), timezone.utc)
         expires_at = now + timedelta(seconds=CONTEXT_LIFETIME_SECONDS)
@@ -421,13 +522,14 @@ class HotspotAttestationService:
         device_type: str,
         client_ip: Optional[str],
         client_mac: str,
+        correlation_id: Optional[str] = None,
     ) -> TrustedRouterContext:
         context = await self.get_context(raw_token)
         if not context:
             raise ConflictError("The trusted hotspot context is missing or expired. Reopen the Wi-Fi sign-in page")
         normalized_mac = normalize_mac(client_mac)
         requested_ip = normalize_client_ip(client_ip) if client_ip else None
-        current = await self.observe_device(context.client_ip, context.client_mac)
+        current = await self.observe_device(context.client_ip, context.client_mac, correlation_id=correlation_id)
         if current.site_id != context.site_id or current.router_id != context.router_id:
             raise ConflictError("The captive device moved to another router; reload the Wi-Fi sign-in page")
         if device_type == "this_device":
@@ -435,7 +537,7 @@ class HotspotAttestationService:
                 raise ConflictError("The purchase device does not match the verified captive device")
             observed = current
         else:
-            observed = await self.observe_device(requested_ip, normalized_mac)
+            observed = await self.observe_device(requested_ip, normalized_mac, correlation_id=correlation_id)
         if observed.site_id != context.site_id:
             raise ConflictError("The purchase device is not connected at the verified site")
         return observed

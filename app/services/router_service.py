@@ -41,6 +41,45 @@ class RouterService:
         self.db = db
         self.collection = db.routers
 
+    @staticmethod
+    def _reference_filter(value: Any) -> dict:
+        """Match either historical string references or BSON ObjectIds."""
+        text = str(value).strip() if value is not None else ""
+        if not text:
+            return {"_id": None}
+        try:
+            oid = ObjectId(text)
+        except Exception:
+            return {"_id": text}
+        return {"$or": [{"_id": oid}, {"_id": text}]}
+
+    async def _validate_site_and_nas(self, site_id: Optional[str], nas_client_id: Optional[str]) -> None:
+        site = None
+        if site_id:
+            site = await self.db.sites.find_one(self._reference_filter(site_id))
+            if not site:
+                raise ValidationError("The selected router site does not exist")
+            status = str(site.get("status") or "").strip().lower()
+            if status != "active":
+                raise ValidationError("The selected router site is not active")
+
+        if not nas_client_id:
+            return
+        nas = await self.db.nas_clients.find_one(self._reference_filter(nas_client_id))
+        if not nas:
+            raise ValidationError("The selected RADIUS NAS client does not exist")
+        if str(nas.get("status") or "active").strip().lower() != "active":
+            raise ValidationError("The selected RADIUS NAS client is not active")
+        nas_site_id = str(nas.get("site_id") or "").strip()
+        router_site_id = str(site.get("_id") if site else site_id or "").strip()
+        if not router_site_id or not nas_site_id:
+            raise ValidationError("A linked router and NAS must both be assigned to a site")
+        nas_site = await self.db.sites.find_one(self._reference_filter(nas_site_id))
+        if not nas_site or str(nas_site.get("status") or "").lower() != "active":
+            raise ValidationError("The selected NAS site does not exist or is not active")
+        if str(nas_site.get("_id")) != router_site_id:
+            raise ConflictError("The router and linked NAS must belong to the same site")
+
     # ------------------------------------------------------------------ #
     # Serialization helpers
     # ------------------------------------------------------------------ #
@@ -82,6 +121,7 @@ class RouterService:
     # ------------------------------------------------------------------ #
     async def create_router(self, data: RouterCreate) -> Dict[str, Any]:
         """Create a new router and return serializable dict."""
+        await self._validate_site_and_nas(data.site_id, data.nas_client_id)
         existing = await self.collection.find_one({"ip_address": data.ip_address})
         if existing:
             raise ConflictError(f"Router with IP {data.ip_address} already exists")
@@ -145,6 +185,13 @@ class RouterService:
         update_data = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
         if not update_data:
             raise ValidationError("No fields to update")
+
+        if "site_id" in update_data or "nas_client_id" in update_data:
+            current = await self._get_raw(router_id)
+            await self._validate_site_and_nas(
+                update_data.get("site_id", current.get("site_id")),
+                update_data.get("nas_client_id", current.get("nas_client_id")),
+            )
 
         if "password" in update_data:
             update_data["password"] = encrypt_value(update_data["password"])

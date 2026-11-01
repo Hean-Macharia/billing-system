@@ -313,6 +313,7 @@ def test_routeros_observation_reads_only_dhcp_and_hotspot_tables(monkeypatch):
     assert observed["observed"] is True
     assert observed["evidence"]["dhcp_lease_status"] == "bound"
     assert observed["evidence"]["hotspot_host_match"] is True
+    assert 0 <= observed["evidence"]["observation_age_seconds"] <= 15
     assert commands == ["/ip/dhcp-server/lease/print", "/ip/hotspot/host/print"]
 
 
@@ -343,7 +344,7 @@ def test_routeros_observation_uses_only_the_selected_allowlisted_target(monkeypa
     assert result["observed"] is False
 
 
-@pytest.mark.parametrize("kind", ["unbound", "expired", "missing-host", "mismatched-host", "duplicate-lease", "duplicate-host"])
+@pytest.mark.parametrize("kind", ["unbound", "expired", "missing-host", "mismatched-host", "duplicate-lease", "duplicate-host", "malformed"])
 def test_routeros_observation_is_negative_or_fails_closed(kind, monkeypatch):
     class FakeRouterOS:
         def __init__(self, password, timeout):
@@ -354,6 +355,7 @@ def test_routeros_observation_is_negative_or_fails_closed(kind, monkeypatch):
 
         def query(self, command, attributes=None):
             if command == "/ip/dhcp-server/lease/print":
+                if kind == "malformed": return [None]
                 lease = {"address": REQUEST["client_ip"], "mac-address": "AA:BB:CC:DD:EE:FF", "status": "bound"}
                 if kind == "unbound": lease["status"] = "offered"
                 if kind == "expired": lease["status"] = "waiting"
@@ -369,7 +371,7 @@ def test_routeros_observation_is_negative_or_fails_closed(kind, monkeypatch):
             pass
 
     monkeypatch.setattr(routeros, "RouterOS", FakeRouterOS)
-    if kind in {"mismatched-host", "duplicate-lease", "duplicate-host"}:
+    if kind in {"mismatched-host", "duplicate-lease", "duplicate-host", "malformed"}:
         with pytest.raises(RuntimeError):
             routeros.observe_hotspot_client(REQUEST["client_ip"], REQUEST["client_mac"], "mock")
     else:
@@ -400,23 +402,49 @@ def _post(address, path, token=None, payload=None):
     connection.request("POST", path, body=body, headers=headers)
     response = connection.getresponse()
     data = json.loads(response.read())
+    correlation_id = response.getheader("X-Correlation-ID")
     connection.close()
-    return response.status, data
+    return response.status, data, correlation_id
 
 
 @pytest.mark.parametrize("authorization", [None, "Basic malformed", "Bearer wrong-token"])
 def test_attestation_route_rejects_missing_or_invalid_bearer(relay_http, authorization):
-    status, body = _post(relay_http, "/api/v1/router/attest", authorization)
+    status, body, correlation_id = _post(relay_http, "/api/v1/router/attest", authorization)
     assert status == 401
     assert body["message"] == "Unauthorized"
+    assert correlation_id and len(correlation_id) == 32
 
 
 def test_attestation_route_uses_existing_auth_and_returns_safe_mapping_error(relay_http, monkeypatch):
-    monkeypatch.setattr(server, "load_attestation_router", lambda *_args: (_ for _ in ()).throw(RuntimeError("Attestation router/site mapping is not configured")))
-    status, body = _post(relay_http, "/api/v1/router/attest", "Bearer " + TOKEN, REQUEST)
+    monkeypatch.setattr(server, "load_attestation_router", lambda *_args: (_ for _ in ()).throw(server.AttestationConfigurationError("Attestation router/site mapping is not configured")))
+    status, body, correlation_id = _post(relay_http, "/api/v1/router/attest", "Bearer " + TOKEN, REQUEST)
     assert status == 503
-    assert body["message"] == "Router attestation could not be verified"
+    assert body["message"] == "Router attestation is not configured"
+    assert correlation_id
     assert TOKEN not in json.dumps(body)
+
+
+@pytest.mark.parametrize(("error", "status", "category", "message"), [
+    (routeros.RouterOSAuthenticationError("secret must not be logged"), 502, "router_authentication_failed", "Router API authentication failed"),
+    (routeros.RouterOSTimeoutError("raw timeout detail"), 504, "router_timeout", "Router did not respond in time"),
+    (routeros.RouterOSConnectionError("private address detail"), 502, "router_connection_failed", "Router could not be reached"),
+    (routeros.RouterOSCommandError("raw RouterOS trap"), 502, "router_command_failed", "Router observation command failed"),
+])
+def test_attestation_http_errors_are_categorized_and_correlated(relay_http, monkeypatch, caplog, error, status, category, message):
+    monkeypatch.setattr(server, "handle_attestation", lambda *_args: (_ for _ in ()).throw(error))
+
+    actual_status, body, correlation_id = _post(
+        relay_http, "/api/v1/router/attest", "Bearer " + TOKEN, REQUEST
+    )
+
+    assert actual_status == status
+    assert body["message"] == message
+    assert correlation_id and len(correlation_id) == 32
+    assert any(getattr(record, "category", None) == category for record in caplog.records)
+    assert "raw timeout detail" not in caplog.text
+    assert "raw RouterOS trap" not in caplog.text
+    assert TOKEN not in caplog.text
+    assert REQUEST["client_mac"] not in caplog.text
 
 
 def test_existing_health_and_router_relay_routes_remain_available(relay_http, monkeypatch):
@@ -439,8 +467,9 @@ def test_existing_health_and_router_relay_routes_remain_available(relay_http, mo
         return original_open(path, *args, **kwargs)
     monkeypatch.setattr(builtins, "open", fake_open)
     monkeypatch.setattr(routeros_module, "run_action", lambda action, payload: {"action": action})
-    status, body = _post(relay_http, "/api/v1/router/relay", "Bearer " + TOKEN, {"action": "system.identity"})
+    status, body, correlation_id = _post(relay_http, "/api/v1/router/relay", "Bearer " + TOKEN, {"action": "system.identity"})
     assert status == 200
     assert body == {"success": True, "data": {"action": "system.identity"}}
+    assert correlation_id
 
 

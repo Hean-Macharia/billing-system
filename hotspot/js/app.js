@@ -86,7 +86,7 @@ function getDefaultApiBase() {
 
     const api = PortalApiRequest.createApiRequest(() => API_BASE_URL);
 
-    async function attestCurrentHotspotDevice() {
+    async function attestCurrentHotspotDevice(signal) {
       const status = document.getElementById('device-identification-status');
       if (!CLIENT_IP || !CLIENT_MAC) {
         saveHotspotContext('');
@@ -101,6 +101,7 @@ function getDefaultApiBase() {
           method: 'POST',
           body: { ip_address: CLIENT_IP, mac_address: CLIENT_MAC },
           timeoutMs: 30000,
+          signal,
           timeoutMessage: 'Secure device verification timed out while checking the router. Please reconnect to WiFi and retry.',
         });
         const token = PortalApiRequest.getTrustedContextToken(result);
@@ -259,16 +260,36 @@ function getDefaultApiBase() {
       return bonus ? `${cap} · ${bonus[0]}` : cap;
     }
 
-    async function loadPlans() {
+    let plansRequest = null;
+    let plansRequestController = null;
+    let plansRequestGeneration = 0;
+
+    function loadPlans() {
+      if (plansRequest) return plansRequest;
+      const generation = ++plansRequestGeneration;
+      plansRequestController = new AbortController();
+      plansRequest = loadPlansOnce(generation, plansRequestController.signal)
+        .finally(() => {
+          if (generation === plansRequestGeneration) {
+            plansRequest = null;
+            plansRequestController = null;
+          }
+        });
+      return plansRequest;
+    }
+
+    async function loadPlansOnce(generation, signal) {
       const listEl = document.getElementById('plan-list');
       listEl.setAttribute('aria-busy', 'true');
       try {
-        const contextToken = await attestCurrentHotspotDevice();
+        const contextToken = await attestCurrentHotspotDevice(signal);
+        if (generation !== plansRequestGeneration || signal.aborted) return;
         let res;
         for (let attempt = 0; ; attempt += 1) {
           try {
             res = await api('/api/v1/hotspot/plans/public', {
               headers: contextToken ? { 'X-Hotspot-Context': contextToken } : {},
+              signal,
             });
             break;
           } catch (error) {
@@ -277,6 +298,7 @@ function getDefaultApiBase() {
             await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
           }
         }
+        if (generation !== plansRequestGeneration || signal.aborted) return;
         const plans = (res.data || []).slice().sort((a, b) => Number(a.price) - Number(b.price));
 
         if (!plans.length) {
@@ -325,11 +347,32 @@ function getDefaultApiBase() {
         });
         listEl.setAttribute('aria-busy', 'false');
       } catch (error) {
+        if (error.code === 'REQUEST_ABORTED' || generation !== plansRequestGeneration) return;
         listEl.innerHTML = `<div class="error-box">Couldn't load packages right now. ${escapeHtml(error.message)}<button type="button" id="retry-plans">Try again</button></div>`;
         listEl.setAttribute('aria-busy', 'false');
-        listEl.querySelector('#retry-plans').addEventListener('click', loadPlans);
+        const retry = listEl.querySelector('#retry-plans');
+        retry.addEventListener('click', async () => {
+          if (plansRequest) return;
+          retry.disabled = true;
+          retry.textContent = 'Retrying…';
+          listEl.setAttribute('aria-busy', 'true');
+          try {
+            await loadPlans();
+          } finally {
+            if (retry.isConnected) {
+              retry.disabled = false;
+              retry.textContent = 'Try again';
+            }
+          }
+        });
       }
     }
+
+    window.addEventListener('pagehide', () => {
+      if (plansRequestController) plansRequestController.abort();
+      plansRequestGeneration += 1;
+      saveHotspotContext('');
+    }, { once: true });
 
     function openPurchaseSheet(plan) {
       const overlay = document.createElement('div');
@@ -380,74 +423,16 @@ function getDefaultApiBase() {
       overlay.querySelector('.sheet-close').onclick = close;
       overlay.querySelector('#cancel-btn').onclick = close;
 
-      let selectedDevice = 'this_device';
-      let verifiedMac = '';
-      let verifiedDevice = null;
-      let deviceLookupSequence = 0;
-      const targetFields = overlay.querySelector('#target-device-fields');
-      const deviceStatus = overlay.querySelector('#device-status');
+      const selectedDevice = 'this_device';
       const normalizeMac = (mac) => String(mac || '').replace(/-/g, ':').toUpperCase();
-      const setVerified = (device) => {
-        if (device?.verification_status !== 'verified' || !device.mac_address || !device.router_id) {
-          throw new Error('The router did not return a complete DHCP verification result.');
-        }
-        verifiedDevice = device;
-        verifiedMac = normalizeMac(device.mac_address);
-        deviceStatus.textContent = `DHCP record matched on ${device.router_name || 'a configured router'}. Trusted router attestation is still required before purchase.`;
-        deviceStatus.dataset.verified = 'true';
-        deviceStatus.dataset.state = 'hint-matched';
-      };
-      const verifyByLookup = async (payload) => {
-        const sequence = ++deviceLookupSequence;
-        verifiedDevice = null;
-        deviceStatus.textContent = 'Verifying device against the MikroTik DHCP lease…';
-        deviceStatus.dataset.verified = 'false';
-        deviceStatus.dataset.state = 'verifying';
-        try {
-          const response = await api('/api/v1/hotspot/devices/lookup', {
-            method: 'POST',
-            body: payload,
-            timeoutMs: 30000,
-            timeoutMessage: 'The MikroTik device check did not finish within 30 seconds. The router or relay may be slow; retry shortly.',
-          });
-          if (sequence !== deviceLookupSequence) return;
-          setVerified(response.data);
-        } catch (error) {
-          if (sequence !== deviceLookupSequence) return;
-          verifiedMac = '';
-          verifiedDevice = null;
-          deviceStatus.textContent = `Device verification failed: ${error.message}`;
-          deviceStatus.dataset.state = 'failed';
-        }
-      };
-      const renderDeviceFields = () => {
-        deviceLookupSequence += 1;
-        verifiedMac = '';
-        verifiedDevice = null;
-        deviceStatus.dataset.verified = 'false';
-        deviceStatus.dataset.state = 'identifying';
-        deviceStatus.textContent = 'Identifying this device from the MikroTik captive redirect…';
-        if (CLIENT_MAC) {
-          verifyByLookup({ ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {}), mac_address: CLIENT_MAC });
-        } else if (CLIENT_IP) {
-          verifyByLookup({ ip_address: CLIENT_IP });
-        } else {
-          targetFields.replaceChildren();
-          deviceStatus.textContent = 'Device verification failed: reconnect through the DevZen Wi-Fi sign-in page so MikroTik can provide this device’s address.';
-          deviceStatus.dataset.state = 'failed';
-        }
-        targetFields.querySelectorAll('input').forEach((input) => {
-          input.addEventListener('input', () => {
-            deviceLookupSequence += 1;
-            verifiedMac = '';
-            verifiedDevice = null;
-            deviceStatus.dataset.verified = 'false';
-            deviceStatus.dataset.state = 'identifying';
-            deviceStatus.textContent = '';
-          });
-        });
-      };
-      renderDeviceFields();
+      const verifiedContextAvailable = Boolean(readHotspotContext());
+      const verifiedMac = verifiedContextAvailable ? normalizeMac(CLIENT_MAC) : '';
+      const deviceStatus = overlay.querySelector('#device-status');
+      deviceStatus.dataset.verified = verifiedMac ? 'true' : 'false';
+      deviceStatus.dataset.state = verifiedMac ? 'verified' : 'failed';
+      deviceStatus.textContent = verifiedMac
+        ? 'This device passed trusted router verification. The backend will verify it again before payment.'
+        : 'Secure device verification is required. Reopen the MikroTik Wi-Fi sign-in page and wait for verification to complete.';
 
       overlay.querySelector('#buy-form').addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -456,8 +441,8 @@ function getDefaultApiBase() {
         const submitBtn = document.getElementById('buy-submit');
         errBox.style.display = 'none';
 
-        if (!verifiedMac || deviceStatus.dataset.verified !== 'true') {
-          errBox.textContent = 'The router DHCP record has not matched this device yet.';
+        if (!readHotspotContext() || !verifiedMac || deviceStatus.dataset.verified !== 'true') {
+          errBox.textContent = 'Secure router verification is required before payment. Reopen the Wi-Fi sign-in page and retry verification.';
           errBox.style.display = 'block';
           return;
         }
@@ -489,7 +474,7 @@ function getDefaultApiBase() {
               phone_number: phone,
               device_type: selectedDevice,
               device_mac: verifiedMac,
-              ...(verifiedDevice?.ip_address ? { ip_address: verifiedDevice.ip_address } : {})
+              ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {})
             },
             headers: readHotspotContext() ? { 'X-Hotspot-Context': readHotspotContext() } : {},
           });

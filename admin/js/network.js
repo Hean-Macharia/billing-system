@@ -17,6 +17,12 @@ let sites = [];
 let total = 0;
 const idOf = (item) => item._id || item.id;
 const siteName = (siteId) => sites.find((site) => String(idOf(site)) === String(siteId))?.name || (siteId ? String(siteId) : 'Unassigned');
+const relationshipMessage = (status) => ({
+  unassigned: 'No site assignment', missing_site: 'Site record missing', inactive_site: 'Site inactive',
+  not_linked: 'RADIUS NAS not linked', missing_nas: 'NAS record missing', inactive_nas: 'NAS inactive',
+  unassigned_nas_site: 'NAS site missing', invalid_nas_site: 'NAS site invalid', site_mismatch: 'Router/NAS site mismatch',
+  valid: 'Router/NAS site match', active: 'Active site',
+})[status] || 'Identity relationship unavailable';
 
 async function loadSites() {
   try {
@@ -43,7 +49,13 @@ async function load() {
 function draw() {
   const query = $('#router-search').value.trim().toLowerCase();
   const filtered = rows.filter((router) => !query || `${router.name} ${router.ip_address} ${router.location || ''} ${router.model_name || ''} ${siteName(router.site_id)}`.toLowerCase().includes(query));
-  $('#router-list').innerHTML = filtered.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Router</th><th>Management</th><th>Site</th><th>Model / RouterOS</th><th>API</th><th>Health</th><th>Last check</th><th>Actions</th></tr></thead><tbody>${filtered.map((router) => `<tr><td><strong>${esc(router.name)}</strong><br><span class="muted-small">${esc(router.location || 'Location not set')}</span></td><td>${esc(router.ip_address)}:${esc(router.port)}</td><td>${esc(siteName(router.site_id))}</td><td>${esc(router.model_name || '—')}<br><span class="muted-small">${esc(router.routeros_version || 'Version not reported')}</span></td><td>${esc(router.api_type || '—')} · SSL ${router.use_ssl ? 'on' : 'off'}</td><td>${statusBadge(router.status || 'unknown')}</td><td>${formatDate(router.last_checked_at)}</td><td><div class="action-row"><button class="btn btn-quiet" data-test="${esc(idOf(router))}">Test</button><button class="btn btn-quiet" data-health="${esc(idOf(router))}">Refresh health</button><button class="btn btn-quiet" data-users="${esc(idOf(router))}">Active users</button><button class="btn btn-quiet" data-leases="${esc(idOf(router))}">DHCP leases</button>${canUpdate ? `<button class="btn btn-quiet" data-edit="${esc(idOf(router))}">Edit</button>` : ''}</div></td></tr>`).join('')}</tbody></table></div>` : empty(rows.length ? 'No routers match this search' : 'No routers are registered');
+  $('#router-list').innerHTML = filtered.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Router</th><th>Management</th><th>Site</th><th>Model / RouterOS</th><th>API</th><th>Health</th><th>Last check</th><th>Actions</th></tr></thead><tbody>${filtered.map((router) => {
+    const relationship = router.attestation_configuration_status === 'eligible'
+      ? relationshipMessage(router.nas_relationship_status)
+      : relationshipMessage(router.site_relationship_status !== 'active' ? router.site_relationship_status : router.nas_relationship_status);
+    const healthFreshness = router.health_freshness || 'unknown';
+    return `<tr><td><strong>${esc(router.name)}</strong><br><span class="muted-small">${esc(router.location || 'Location not set')}</span></td><td>${esc(router.ip_address)}:${esc(router.port)}</td><td>${esc(siteName(router.site_id))}<br><span class="muted-small">${esc(relationship)}</span></td><td>${esc(router.model_name || '—')}<br><span class="muted-small">${esc(router.routeros_version || 'Version not reported')}</span></td><td>${esc(router.api_type || '—')} · SSL ${router.use_ssl ? 'on' : 'off'}</td><td>${statusBadge(router.status || 'unknown')}<br><span class="muted-small">${esc(healthFreshness)} cached health</span></td><td>${formatDate(router.last_checked_at)}</td><td><div class="action-row"><button class="btn btn-quiet" data-test="${esc(idOf(router))}">Test</button><button class="btn btn-quiet" data-health="${esc(idOf(router))}">Refresh health</button><button class="btn btn-quiet" data-users="${esc(idOf(router))}">Active users</button><button class="btn btn-quiet" data-leases="${esc(idOf(router))}">DHCP leases</button>${canUpdate ? `<button class="btn btn-quiet" data-edit="${esc(idOf(router))}">Edit</button>` : ''}</div></td></tr>`;
+  }).join('')}</tbody></table></div>` : empty(rows.length ? 'No routers match this search' : 'No routers are registered');
   $('#router-list').querySelectorAll('[data-edit]').forEach((button) => button.addEventListener('click', () => openForm(rows.find((router) => String(idOf(router)) === button.dataset.edit))));
   for (const [selector, suffix, label] of [['[data-test]', 'test', 'Connectivity test'], ['[data-health]', 'health', 'Health refresh']]) {
     $('#router-list').querySelectorAll(selector).forEach((button) => button.addEventListener('click', async () => {

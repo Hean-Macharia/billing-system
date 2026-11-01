@@ -10,6 +10,26 @@ USERNAME = "isp-billing-api"
 TIMEOUT = 8
 
 
+class RouterOSConnectionError(ConnectionError):
+    """RouterOS socket could not be established or was closed."""
+
+
+class RouterOSTimeoutError(TimeoutError):
+    """A RouterOS socket operation exceeded its configured timeout."""
+
+
+class RouterOSAuthenticationError(PermissionError):
+    """RouterOS rejected the configured API credentials."""
+
+
+class RouterOSCommandError(RuntimeError):
+    """RouterOS returned a trap/fatal response for a read operation."""
+
+
+class RouterOSObservationError(RuntimeError):
+    """Router observations were malformed, conflicting, or ambiguous."""
+
+
 def encode_length(length):
     if length < 0x80:
         return bytes([length])
@@ -76,23 +96,31 @@ class RouterOS:
         self.lock = threading.Lock()
 
     def connect(self):
-        self.sock = socket.create_connection(
-            (self.host, self.port), timeout=self.timeout
-        )
+        try:
+            self.sock = socket.create_connection(
+                (self.host, self.port), timeout=self.timeout
+            )
+        except socket.timeout as exc:
+            raise RouterOSTimeoutError("RouterOS connection timed out") from exc
+        except OSError as exc:
+            raise RouterOSConnectionError("RouterOS connection failed") from exc
         self.sock.settimeout(self.timeout)
 
         # RouterOS 6.49 supports legacy API login.
-        reply = self._command([
-            "/login",
-            "=name=" + self.username,
-            "=password=" + self.password,
-        ])
+        try:
+            reply = self._command([
+                "/login",
+                "=name=" + self.username,
+                "=password=" + self.password,
+            ])
+        except RouterOSCommandError as exc:
+            raise RouterOSAuthenticationError("RouterOS API authentication failed") from exc
 
         if any(sentence[0] == "!trap" for sentence in reply if sentence):
-            raise PermissionError("RouterOS API authentication failed")
+            raise RouterOSAuthenticationError("RouterOS API authentication failed")
 
         if not any(sentence[0] == "!done" for sentence in reply if sentence):
-            raise ConnectionError("RouterOS login response was unexpected")
+            raise RouterOSConnectionError("RouterOS login response was unexpected")
 
     def close(self):
         if self.sock:
@@ -134,7 +162,7 @@ class RouterOS:
                         ),
                         "RouterOS command failed",
                     )
-                    raise RuntimeError(message)
+                    raise RouterOSCommandError(message)
                 return sentences
 
     def query(self, command, attributes=None):
@@ -280,6 +308,13 @@ def observe_hotspot_client(client_ip, client_mac, password, router=None):
         api.connect()
         leases = api.query("/ip/dhcp-server/lease/print")
         hosts = api.query("/ip/hotspot/host/print")
+        if (
+            not isinstance(leases, list)
+            or not isinstance(hosts, list)
+            or any(not isinstance(row, dict) for row in leases)
+            or any(not isinstance(row, dict) for row in hosts)
+        ):
+            raise RouterOSObservationError("RouterOS returned malformed device observations")
 
         def matching_rows(rows):
             matches = []
@@ -297,7 +332,7 @@ def observe_hotspot_client(client_ip, client_mac, password, router=None):
 
         lease_matches = matching_rows(leases)
         if len(lease_matches) > 1:
-            raise RuntimeError("Ambiguous DHCP observation")
+            raise RouterOSObservationError("Ambiguous DHCP observation")
 
         lease = lease_matches[0] if lease_matches else None
         observed_ip = normalized_ip
@@ -309,7 +344,7 @@ def observe_hotspot_client(client_ip, client_mac, password, router=None):
                 # A conflicting record for either requested identifier is not
                 # equivalent to an ordinary absent-client result.
                 if lease_ip == observed_ip or lease_mac == normalized_mac:
-                    raise RuntimeError("Conflicting DHCP observation")
+                    raise RouterOSObservationError("Conflicting DHCP observation")
                 lease = None
 
         if observed_ip is None:
@@ -320,7 +355,7 @@ def observe_hotspot_client(client_ip, client_mac, password, router=None):
         else:
             host_matches = matching_rows(hosts)
         if len(host_matches) > 1:
-            raise RuntimeError("Ambiguous HotSpot host observation")
+            raise RouterOSObservationError("Ambiguous HotSpot host observation")
         host = host_matches[0] if host_matches else None
 
         lease_status = str((lease[0].get("status") if lease else "missing") or "missing").lower()
@@ -328,9 +363,9 @@ def observe_hotspot_client(client_ip, client_mac, password, router=None):
         host_current = bool(host and host[1] == observed_ip and host[2] == normalized_mac)
 
         if host and not host_current:
-            raise RuntimeError("DHCP and HotSpot observations conflict")
+            raise RouterOSObservationError("DHCP and HotSpot observations conflict")
         if host_current and not lease_current:
-            raise RuntimeError("HotSpot observation has no current matching bound DHCP lease")
+            raise RouterOSObservationError("HotSpot observation has no current matching bound DHCP lease")
         else:
             observed = lease_current and host_current
 

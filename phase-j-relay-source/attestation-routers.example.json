@@ -1,0 +1,20 @@
+[
+  {
+    "router_id": "REPLACE_WITH_APPROVED_NYAURURU_ROUTER_OBJECTID_24_HEX",
+    "site_id": "REPLACE_WITH_APPROVED_NYAURURU_SITE_OBJECTID_24_HEX",
+    "host": "REPLACE_WITH_APPROVED_PRIVATE_NYAURURU_MANAGEMENT_IP",
+    "port": 8728,
+    "username": "REPLACE_WITH_APPROVED_ROUTEROS_API_USERNAME",
+    "enabled": true,
+    "site_active": true
+  },
+  {
+    "router_id": "REPLACE_WITH_APPROVED_NAKURU_ROUTER_OBJECTID_24_HEX",
+    "site_id": "REPLACE_WITH_APPROVED_NAKURU_SITE_OBJECTID_24_HEX",
+    "host": "REPLACE_WITH_APPROVED_PRIVATE_NAKURU_MANAGEMENT_IP",
+    "port": 8728,
+    "username": "REPLACE_WITH_APPROVED_ROUTEROS_API_USERNAME",
+    "enabled": true,
+    "site_active": true
+  }
+]

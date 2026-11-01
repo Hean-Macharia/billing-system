@@ -1,4 +1,6 @@
 """HotSpot plan (profile) API routes."""
+import re
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, Request, Response
@@ -22,6 +24,13 @@ from app.utils.helpers import success_response
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/hotspot", tags=["HotSpot"])
+
+
+def _correlation_id(request: Request, response: Response) -> str:
+    supplied = request.headers.get("X-Correlation-ID", "")
+    value = supplied.lower() if re.fullmatch(r"[A-Fa-f0-9]{32}", supplied) else uuid.uuid4().hex
+    response.headers["X-Correlation-ID"] = value
+    return value
 
 
 def _plan_to_response(p) -> dict:
@@ -127,8 +136,46 @@ async def _resolve_hotspot_device(data: HotspotDeviceLookupRequest, db: AsyncIOM
         raise ServiceUnavailableError(
             "Device verification is temporarily unavailable because one or more configured routers could not be checked"
         )
-    if len(matches) > 1 or (matches and expired_matches):
-        raise ConflictError("This device matches DHCP leases on multiple routers; ask support to resolve the site assignment")
+
+    all_matches = matches + expired_matches
+    matching_router_ids = {record["router_id"] for record in all_matches}
+    if len(matching_router_ids) > 1:
+        matching_sites = {str(record.get("site_id") or "") for record in all_matches}
+        category = "multiple routers across multiple sites" if len(matching_sites) > 1 else "multiple routers at one site"
+        logger.warning(
+            "HotSpot DHCP lookup found matching device records on multiple routers",
+            extra={
+                "event": "hotspot_dhcp_lookup_ambiguous_routers",
+                "router_ids": sorted(matching_router_ids),
+                "site_count": len(matching_sites),
+                "record_count": len(all_matches),
+            },
+        )
+        raise ConflictError(
+            f"This device matches DHCP records on {category}; ask support to resolve the router assignment"
+        )
+
+    if len(matches) > 1:
+        logger.warning(
+            "HotSpot DHCP lookup found duplicate active leases on one router",
+            extra={
+                "event": "hotspot_dhcp_lookup_duplicate_leases",
+                "router_id": next(iter(matching_router_ids)),
+                "record_count": len(matches),
+            },
+        )
+        raise ConflictError("This router has duplicate active DHCP lease records for the device; ask support to resolve them")
+
+    if matches and expired_matches:
+        logger.warning(
+            "HotSpot DHCP lookup found both active and expired lease records on one router",
+            extra={
+                "event": "hotspot_dhcp_lookup_active_expired_duplicate",
+                "router_id": next(iter(matching_router_ids)),
+                "record_count": len(all_matches),
+            },
+        )
+        raise ConflictError("This router has conflicting active and expired DHCP records for the device; ask support to resolve them")
     if matches:
         return matches[0]
     if expired_matches:
@@ -207,12 +254,16 @@ async def list_public_hotspot_plans(
 
 @router.post("/devices/attest", response_model=dict)
 async def attest_hotspot_device(
+    request: Request,
     data: HotspotDeviceAttestationRequest,
     response: Response,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Use untrusted RouterOS hints to request authenticated relay observation."""
-    context = await HotspotAttestationService(db).create_context(data.ip_address, data.mac_address)
+    correlation_id = _correlation_id(request, response)
+    context = await HotspotAttestationService(db).create_context(
+        data.ip_address, data.mac_address, correlation_id=correlation_id
+    )
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return success_response(message="HotSpot device context verified", data=context)
@@ -238,11 +289,14 @@ async def purchase_hotspot_voucher(
         raise ConflictError("Secure device verification is required before starting a HotSpot purchase")
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+    correlation_id = uuid.uuid4().hex
+    response.headers["X-Correlation-ID"] = correlation_id
     trusted_context = await HotspotAttestationService(db).attest_purchase_device(
         raw_token=hotspot_context,
         device_type=data.device_type,
         client_ip=data.ip_address,
         client_mac=data.device_mac,
+        correlation_id=correlation_id,
     )
 
     from app.services.mpesa_service import MpesaService

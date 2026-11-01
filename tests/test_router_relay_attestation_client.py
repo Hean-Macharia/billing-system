@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from app.integrations.mikrotik import relay_client
@@ -48,4 +50,36 @@ async def test_attestation_client_uses_existing_bearer_transport_and_new_contrac
     assert method == "POST"
     assert url == "https://relay.example.test/api/v1/router/attest"
     assert headers["Authorization"].startswith("Bearer ")
+    assert re.fullmatch(r"[a-f0-9]{32}", headers["X-Correlation-ID"])
     assert body == request
+
+
+@pytest.mark.asyncio
+async def test_relay_http_failure_retains_safe_status_and_correlation_id(monkeypatch):
+    class FakeResponse:
+        status_code = 502
+        headers = {"X-Correlation-ID": "f" * 32}
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout, headers):
+            self.headers = headers
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def request(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(relay_client.httpx, "AsyncClient", FakeAsyncClient)
+    client = relay_client.RouterRelayClient(
+        base_url="https://relay.example.test", token="local-test-token-not-a-production-secret"
+    )
+
+    with pytest.raises(relay_client.RouterRelayError) as raised:
+        await client.attest_hotspot_client({})
+
+    assert raised.value.status_code == 502
+    assert raised.value.correlation_id == "f" * 32

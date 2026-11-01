@@ -164,6 +164,46 @@ async def test_expired_lease_is_not_verified(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_active_leases_on_one_router_have_specific_conflict(monkeypatch):
+    mikrotik = router("Nyaururu RB951", "nyaururu")
+
+    async def get_leases(_service, _router_id):
+        return [
+            {"address": "10.0.0.5", "mac_address": "AA:BB:CC:DD:EE:FF", "status": "bound"},
+            {"address": "10.0.0.5", "mac_address": "aa-bb-cc-dd-ee-ff", "status": "bound"},
+        ]
+
+    monkeypatch.setattr(hotspot.RouterService, "get_dhcp_leases", get_leases)
+    with pytest.raises(ConflictError, match="duplicate active DHCP lease records"):
+        await hotspot._resolve_hotspot_device(
+            hotspot.HotspotDeviceLookupRequest(
+                ip_address="10.0.0.5", mac_address="AA:BB:CC:DD:EE:FF"
+            ),
+            FakeDatabase([mikrotik]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_active_and_expired_records_on_one_router_are_conflicting(monkeypatch):
+    mikrotik = router("Nyaururu RB951", "nyaururu")
+
+    async def get_leases(_service, _router_id):
+        return [
+            {"address": "10.0.0.5", "mac_address": "AA:BB:CC:DD:EE:FF", "status": "bound", "expires_seconds": 100},
+            {"address": "10.0.0.5", "mac_address": "AA:BB:CC:DD:EE:FF", "status": "expired", "expires_seconds": 0},
+        ]
+
+    monkeypatch.setattr(hotspot.RouterService, "get_dhcp_leases", get_leases)
+    with pytest.raises(ConflictError, match="conflicting active and expired DHCP records"):
+        await hotspot._resolve_hotspot_device(
+            hotspot.HotspotDeviceLookupRequest(
+                ip_address="10.0.0.5", mac_address="AA:BB:CC:DD:EE:FF"
+            ),
+            FakeDatabase([mikrotik]),
+        )
+
+
+@pytest.mark.asyncio
 async def test_missing_device_information_is_rejected():
     with pytest.raises(ValidationError, match="IP address or MAC"):
         await hotspot._resolve_hotspot_device(

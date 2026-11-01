@@ -57,7 +57,7 @@ class FakeRelay:
         self.unavailable = set(unavailable)
         self.requests = []
 
-    async def attest_hotspot_client(self, request):
+    async def attest_hotspot_client(self, request, correlation_id=None):
         self.requests.append(request)
         if request["router_id"] in self.unavailable:
             raise RuntimeError("mock relay unavailable")
@@ -84,10 +84,10 @@ class RelayAllowlistMismatch(FakeRelay):
         super().__init__(observed_router_ids)
         self.rejected = set(rejected)
 
-    async def attest_hotspot_client(self, request):
+    async def attest_hotspot_client(self, request, correlation_id=None):
         if request["router_id"] in self.rejected:
             raise RouterRelayError("Relay returned HTTP 403", status_code=403)
-        return await super().attest_hotspot_client(request)
+        return await super().attest_hotspot_client(request, correlation_id=correlation_id)
 
 
 def make_service(db, relay, monkeypatch):
@@ -141,6 +141,26 @@ async def test_duplicate_router_observations_are_rejected(attestation_db, monkey
         await make_service(attestation_db, FakeRelay({first, second}), monkeypatch).create_context(
             CLIENT_IP, CLIENT_MAC
         )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_match_diagnostics_name_candidates_but_not_device(attestation_db, monkeypatch, caplog):
+    first, _ = await seed_router(attestation_db, "Nyaururu edge", "Nyaururu")
+    second, _ = await seed_router(attestation_db, "Nakuru edge", "Nakuru")
+    await create_nonce_index(attestation_db)
+    service = make_service(attestation_db, FakeRelay({first, second}), monkeypatch)
+
+    with pytest.raises(ConflictError, match="multiple routers"):
+        await service.create_context(CLIENT_IP, CLIENT_MAC)
+
+    record = next(
+        record for record in caplog.records
+        if getattr(record, "event", None) == "hotspot_router_observation_ambiguous"
+    )
+    assert set(record.router_ids) == {first, second}
+    assert record.match_count == 2
+    assert CLIENT_IP not in caplog.text
+    assert CLIENT_MAC not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -392,8 +412,8 @@ async def test_bad_signature_and_malformed_response_are_rejected(attestation_db,
     await create_nonce_index(attestation_db)
 
     class BadSignatureRelay(FakeRelay):
-        async def attest_hotspot_client(self, request):
-            result = await super().attest_hotspot_client(request)
+        async def attest_hotspot_client(self, request, correlation_id=None):
+            result = await super().attest_hotspot_client(request, correlation_id=correlation_id)
             result["signature"] = "0" * 64
             return result
 
@@ -402,7 +422,7 @@ async def test_bad_signature_and_malformed_response_are_rejected(attestation_db,
         await service.create_context(CLIENT_IP, CLIENT_MAC)
 
     class MalformedRelay:
-        async def attest_hotspot_client(self, _request):
+        async def attest_hotspot_client(self, _request, correlation_id=None):
             return {"success": True, "data": []}
 
     service = make_service(attestation_db, MalformedRelay(), monkeypatch)
@@ -437,7 +457,7 @@ async def test_concurrent_replay_only_consumes_nonce_once(attestation_db, monkey
 
 
 @pytest.mark.asyncio
-async def test_expired_challenge_cannot_be_consumed(attestation_db, monkeypatch):
+async def test_expired_challenge_cannot_be_consumed_with_motor_naive_utc(attestation_db, monkeypatch, caplog):
     router_id, site_id = await seed_router(attestation_db, "Nakuru edge", "Nakuru")
     await create_nonce_index(attestation_db)
     service = make_service(attestation_db, FakeRelay({router_id}), monkeypatch)
@@ -447,12 +467,25 @@ async def test_expired_challenge_cannot_be_consumed(attestation_db, monkeypatch)
     await attestation_db.router_attestation_nonces.update_one(
         {"nonce": nonce}, {"$set": {"expires_at": datetime.fromtimestamp(NOW - 1, timezone.utc)}}
     )
+    original_find_one = attestation_db.router_attestation_nonces.find_one
+
+    async def naive_utc_find_one(*args, **kwargs):
+        record = await original_find_one(*args, **kwargs)
+        if record and isinstance(record.get("expires_at"), datetime):
+            record["expires_at"] = record["expires_at"].replace(tzinfo=None)
+        return record
+
+    monkeypatch.setattr(attestation_db.router_attestation_nonces, "find_one", naive_utc_find_one)
     reply = await service.relay.attest_hotspot_client({
         "router_id": router_id, "site_id": site_id, "client_ip": CLIENT_IP,
         "client_mac": CLIENT_MAC, "nonce": nonce,
     })
     with pytest.raises(ConflictError, match="already used or expired"):
         await service._verify_relay_reply({"router_id": router_id, "site_id": site_id}, nonce, challenge, reply)
+    assert any(
+        getattr(record, "nonce_result", None) == "expired_or_unknown"
+        for record in caplog.records
+    )
 
 
 def test_hmac_authentication_is_canonical_and_tamper_evident():
@@ -558,7 +591,7 @@ async def test_relay_authentication_failure_is_not_a_fallback(attestation_db, mo
     router_id, _ = await seed_router(attestation_db, "Nakuru edge", "Nakuru")
 
     class UnauthorizedRelay:
-        async def attest_hotspot_client(self, _request):
+        async def attest_hotspot_client(self, _request, correlation_id=None):
             raise RouterRelayError("Relay authentication failed")
 
     service = make_service(attestation_db, UnauthorizedRelay(), monkeypatch)
@@ -575,9 +608,9 @@ async def test_purchase_target_must_remain_at_the_verified_site(attestation_db, 
     context = await service.create_context(CLIENT_IP, CLIENT_MAC)
 
     class PurchaseRelay:
-        async def attest_hotspot_client(self, request):
+        async def attest_hotspot_client(self, request, correlation_id=None):
             observed_router = first_router if request["client_mac"] == CLIENT_MAC else second_router
-            return await FakeRelay({observed_router}).attest_hotspot_client(request)
+            return await FakeRelay({observed_router}).attest_hotspot_client(request, correlation_id=correlation_id)
 
     service.relay = PurchaseRelay()
 

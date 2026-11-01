@@ -7,6 +7,7 @@ RouterOS operations before forwarding request data to the private VPN address.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any, Dict, Optional
 
 import httpx
@@ -20,9 +21,15 @@ logger = get_logger(__name__)
 class RouterRelayError(Exception):
     """Raised for relayed API failures or invalid relay responses."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        correlation_id: Optional[str] = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
+        self.correlation_id = correlation_id
 
 
 class RouterRelayClient:
@@ -122,14 +129,16 @@ class RouterRelayClient:
         rows = payload.get("data") if isinstance(payload, dict) else payload
         return rows if isinstance(rows, list) else []
 
-    async def attest_hotspot_client(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def attest_hotspot_client(
+        self, request: Dict[str, Any], correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Request a signed, read-only HotSpot observation from the relay.
 
         The endpoint is implemented in the local Phase J relay source copy;
         production support still depends on deploying a compatible relay.
         Callers must validate the signed response before trusting any value.
         """
-        return await self._request("POST", "/api/v1/router/attest", request)
+        return await self._request("POST", "/api/v1/router/attest", request, correlation_id=correlation_id)
 
     async def get_queues(self) -> list:
         payload = await self._request("POST", "/api/v1/router/relay", {"action": "queue.list"})
@@ -139,22 +148,60 @@ class RouterRelayClient:
     async def close(self) -> None:
         return None
 
-    async def _request(self, method: str, path: str, json_body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        json_body: Optional[Dict[str, Any]] = None,
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         if not self.base_url:
             raise RouterRelayError("ROUTER_RELAY_URL is not configured")
         if not self.token:
             raise RouterRelayError("ROUTER_RELAY_TOKEN is not configured")
 
+        correlation_id = correlation_id or uuid.uuid4().hex
+        headers = self._headers()
+        headers["X-Correlation-ID"] = correlation_id
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers()) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
                 response = await client.request(method, f"{self.base_url}{path}", json=json_body)
+                response_correlation_id = getattr(response, "headers", {}).get(
+                    "X-Correlation-ID", correlation_id
+                )
                 if response.status_code == 401:
-                    raise RouterRelayError("Relay authentication failed", status_code=401)
+                    raise RouterRelayError("Relay authentication failed", status_code=401, correlation_id=response_correlation_id)
                 if response.status_code >= 400:
-                    raise RouterRelayError(f"Relay returned HTTP {response.status_code}", status_code=response.status_code)
+                    raise RouterRelayError(
+                        f"Relay returned HTTP {response.status_code}",
+                        status_code=response.status_code,
+                        correlation_id=response_correlation_id,
+                    )
                 body = response.json()
+        except RouterRelayError as exc:
+            logger.warning(
+                "Router relay request failed",
+                extra={
+                    "event": "router_relay_request_failed",
+                    "status_code": exc.status_code,
+                    "correlation_id": exc.correlation_id or correlation_id,
+                    "path": path,
+                },
+            )
+            raise
         except httpx.HTTPError as exc:
-            raise RouterRelayError(f"Relay connection failed: {exc}") from exc
+            logger.warning(
+                "Router relay transport failed",
+                extra={
+                    "event": "router_relay_transport_failed",
+                    "correlation_id": correlation_id,
+                    "path": path,
+                    "exception_class": type(exc).__name__,
+                },
+            )
+            raise RouterRelayError(
+                "Relay connection failed", correlation_id=correlation_id
+            ) from exc
 
         if not isinstance(body, dict):
             raise RouterRelayError("Relay returned an invalid payload")

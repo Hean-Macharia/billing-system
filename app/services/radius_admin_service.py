@@ -21,9 +21,30 @@ class RadiusAdminService:
         self.nas_collection = db.nas_clients
         self.user_collection = db.radius_users
 
+    @staticmethod
+    def _reference_filter(value):
+        text = str(value).strip() if value is not None else ""
+        if not text:
+            return {"_id": None}
+        try:
+            oid = ObjectId(text)
+        except Exception:
+            return {"_id": text}
+        return {"$or": [{"_id": oid}, {"_id": text}]}
+
+    async def _validate_site(self, site_id: Optional[str]) -> None:
+        if not site_id:
+            return
+        site = await self.db.sites.find_one(self._reference_filter(site_id))
+        if not site:
+            raise ValidationError("The selected NAS site does not exist")
+        if str(site.get("status") or "").strip().lower() != "active":
+            raise ValidationError("The selected NAS site is not active")
+
     # ── NAS Clients ──
 
     async def create_nas(self, data: NasClientCreate) -> NasClient:
+        await self._validate_site(data.site_id)
         existing = await self.nas_collection.find_one({"ip_address": data.ip_address})
         if existing:
             raise ConflictError(f"NAS with IP {data.ip_address} already exists")
@@ -74,6 +95,21 @@ class RadiusAdminService:
         update_data = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
         if not update_data:
             raise ValidationError("No fields to update")
+        if "site_id" in update_data:
+            await self._validate_site(update_data["site_id"])
+            try:
+                nas_oid = ObjectId(nas_id)
+            except Exception as exc:
+                raise NotFoundError("NAS client not found") from exc
+            linked_routers = await self.db.routers.find(
+                {"$or": [{"nas_client_id": nas_id}, {"nas_client_id": nas_oid}]},
+                {"site_id": 1},
+            ).to_list(length=1000)
+            requested_site = str(update_data["site_id"])
+            for linked_router in linked_routers:
+                router_site = str(linked_router.get("site_id") or "")
+                if router_site != requested_site:
+                    raise ConflictError("Changing this NAS site would conflict with an associated router")
         update_data["updated_at"] = datetime.now(timezone.utc)
 
         result = await self.nas_collection.update_one(

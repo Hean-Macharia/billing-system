@@ -1,5 +1,7 @@
 # Multi-router attestation and production verification
 
+> **Superseded for current implementation and test results:** see [relay-attestation-production-integration.md](relay-attestation-production-integration.md). This earlier note records the previous local test snapshot and is retained as history.
+
 **Date:** 2026-10-31  
 **Scope:** Local source, isolated mocks, and operational preparation only. No Render, production MongoDB, VPS, MikroTik, FreeRADIUS, or payment system was contacted.
 
