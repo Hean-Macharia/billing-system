@@ -2,7 +2,7 @@
 
 ## Daraja flow
 
-`DarajaClient` obtains OAuth credentials server-side, sends STK Push/query requests with timeouts, and never runs in browser code. `MpesaService` creates a pending transaction, links the provider checkout request, processes callbacks by querying the provider, checks transaction matching, uses idempotent settlement, and reconciles pending/settlement failures. HotSpot voucher creation is backend-controlled and tied to the settled transaction. UI must treat STK acceptance as pending, not paid; voucher delivery is only allowed when the backend status confirms settlement and provides the voucher.
+`DarajaClient` obtains OAuth credentials server-side, sends STK Push/query requests with timeouts, and never runs in browser code. `MpesaService` creates a pending transaction, links the provider checkout request, durably marks callback verification pending before the public callback acknowledges Safaricom, then queries the provider in a background task and checks transaction matching before idempotent settlement. The existing reconciliation job recovers pending callback verification or failed settlement after worker interruption. HotSpot voucher creation is backend-controlled and tied to the settled transaction. UI must treat STK acceptance as pending, not paid; voucher delivery is only allowed when the backend status confirms settlement and provides the voucher.
 
 All payment tests in this environment use mocks. No real STK request or callback was sent. Production callback URL, Daraja app settings and provider connectivity remain unverified. `render.yaml` declares Daraja variables as externally configured (`sync: false`); values were not inspected.
 

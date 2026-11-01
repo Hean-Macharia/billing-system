@@ -164,16 +164,8 @@ class MpesaService:
         Returns:
             Updated MpesaTransactionInDB
         """
-        if not isinstance(body, dict):
-            raise ValidationError("Invalid M-Pesa callback")
-        callback_body = body.get("Body")
-        stk_callback = callback_body.get("stkCallback") if isinstance(callback_body, dict) else None
-        if not isinstance(stk_callback, dict):
-            raise ValidationError("Invalid M-Pesa callback")
-        checkout_request_id = stk_callback.get("CheckoutRequestID")
-
-        if not isinstance(checkout_request_id, str) or not checkout_request_id.strip():
-            raise ValidationError("Missing CheckoutRequestID in callback")
+        stk_callback = self._callback_payload(body)
+        checkout_request_id = stk_callback["CheckoutRequestID"]
 
         doc = await self.collection.find_one({"checkout_request_id": checkout_request_id})
         if not doc:
@@ -221,6 +213,56 @@ class MpesaService:
             provider_result,
             callback_metadata=stk_callback.get("CallbackMetadata"),
         )
+
+    @staticmethod
+    def _callback_payload(body: dict) -> dict:
+        """Validate and return the Daraja STK callback body without logging it."""
+        if not isinstance(body, dict):
+            raise ValidationError("Invalid M-Pesa callback")
+        callback_body = body.get("Body")
+        stk_callback = callback_body.get("stkCallback") if isinstance(callback_body, dict) else None
+        if not isinstance(stk_callback, dict):
+            raise ValidationError("Invalid M-Pesa callback")
+        checkout_request_id = stk_callback.get("CheckoutRequestID")
+        if not isinstance(checkout_request_id, str) or not checkout_request_id.strip():
+            raise ValidationError("Missing CheckoutRequestID in callback")
+        return stk_callback
+
+    async def enqueue_callback(self, body: dict) -> Optional[str]:
+        """Durably mark callback verification pending before acknowledging Daraja.
+
+        The returned checkout ID should be processed in an in-process background
+        task. Persisting the marker first lets the existing reconciliation job
+        recover work if the web worker exits after sending the acknowledgement.
+        """
+        checkout_request_id = self._callback_payload(body)["CheckoutRequestID"].strip()
+        doc = await self.collection.find_one({"checkout_request_id": checkout_request_id})
+        if not doc:
+            logger.warning("Callback for unknown checkout request")
+            raise NotFoundError("Transaction not found for this checkout request")
+
+        if doc.get("callback_received"):
+            if (
+                doc.get("status") == MpesaTransactionStatus.SUCCESS.value
+                and not doc.get("settled")
+                and not doc.get("settlement_review_required")
+            ):
+                return checkout_request_id
+            return None
+
+        queued = await self.collection.update_one(
+            {
+                "_id": doc["_id"],
+                "callback_received": {"$ne": True},
+                "callback_verification_pending": {"$ne": True},
+            },
+            {"$set": {
+                "callback_verification_pending": True,
+                "callback_enqueued_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }},
+        )
+        return checkout_request_id if queued.modified_count == 1 else None
 
     async def _query_provider_status(self, checkout_request_id: str) -> Optional[dict]:
         """Return a status response confirmed by Daraja for this checkout."""

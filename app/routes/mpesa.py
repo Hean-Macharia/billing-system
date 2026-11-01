@@ -9,7 +9,7 @@ Phase 5 endpoints:
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.dependencies import get_db, require_permission
@@ -72,6 +72,7 @@ async def initiate_stk_push(
 @router.post("/callback", response_model=dict)
 async def mpesa_callback(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Safaricom STK Push callback endpoint.
@@ -80,14 +81,23 @@ async def mpesa_callback(
     Idempotency is handled internally to prevent duplicate processing.
     """
     body = await request.json()
-    logger.info("M-Pesa callback received")
-
     service = MpesaService(db)
-    tx = await service.process_callback(body)
+    checkout_request_id = await service.enqueue_callback(body)
+    if checkout_request_id:
+        background_tasks.add_task(_process_callback_background, body, db)
+    logger.info("M-Pesa callback accepted for provider verification")
     return success_response(
-        message="Callback processed",
-        data={"status": tx.status.value},
+        message="Callback accepted for verification",
+        data={"status": "accepted"},
     )
+
+
+async def _process_callback_background(body: dict, db: AsyncIOMotorDatabase) -> None:
+    """Verify and settle callback data after the HTTP acknowledgement is sent."""
+    try:
+        await MpesaService(db).process_callback(body)
+    except Exception as exc:  # noqa: BLE001 - do not log callback/customer payloads
+        logger.error("M-Pesa callback background processing failed: %s", type(exc).__name__)
 
 
 @router.post("/query", response_model=dict)

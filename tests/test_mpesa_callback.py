@@ -16,6 +16,43 @@ from app.routes import mpesa
 from app.services.mpesa_service import MpesaService
 
 
+def test_callback_enqueue_is_durable_and_duplicate_safe():
+    class FakeCollection:
+        def __init__(self):
+            self.doc = {
+                "_id": "mock-transaction-id",
+                "checkout_request_id": "checkout-enqueue-test",
+                "callback_received": False,
+                "callback_verification_pending": False,
+            }
+
+        async def find_one(self, query):
+            return dict(self.doc) if query.get("checkout_request_id") == self.doc["checkout_request_id"] else None
+
+        async def update_one(self, query, update):
+            if (
+                query.get("_id") == self.doc["_id"]
+                and self.doc["callback_received"] is not True
+                and self.doc["callback_verification_pending"] is not True
+            ):
+                self.doc.update(update["$set"])
+                return SimpleNamespace(modified_count=1)
+            return SimpleNamespace(modified_count=0)
+
+    async def run_case():
+        service = MpesaService.__new__(MpesaService)
+        service.collection = FakeCollection()
+        body = {"Body": {"stkCallback": {"CheckoutRequestID": "checkout-enqueue-test"}}}
+        first = await service.enqueue_callback(body)
+        duplicate = await service.enqueue_callback(body)
+        assert first == "checkout-enqueue-test"
+        assert duplicate is None
+        assert service.collection.doc["callback_verification_pending"] is True
+        assert service.collection.doc["callback_enqueued_at"] is not None
+
+    asyncio.run(run_case())
+
+
 @pytest.mark.asyncio
 async def test_concurrent_duplicate_callbacks_settle_only_once():
     client = AsyncMongoMockClient(tz_aware=True)
@@ -557,6 +594,10 @@ def test_public_callback_does_not_log_or_return_submitted_personal_data(caplog, 
         def __init__(self, _db):
             pass
 
+        async def enqueue_callback(self, body):
+            assert sensitive_values[0] in str(body)
+            return sensitive_values[2]
+
         async def process_callback(self, body):
             assert sensitive_values[0] in str(body)
             return SimpleNamespace(status=SimpleNamespace(value="success"))
@@ -583,6 +624,6 @@ def test_public_callback_does_not_log_or_return_submitted_personal_data(caplog, 
     )
 
     assert response.status_code == 200
-    assert response.json()["data"] == {"status": "success"}
+    assert response.json()["data"] == {"status": "accepted"}
     assert all(value not in response.text for value in sensitive_values)
     assert all(value not in caplog.text for value in sensitive_values)
