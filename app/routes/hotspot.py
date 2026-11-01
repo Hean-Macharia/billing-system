@@ -307,6 +307,18 @@ async def purchase_hotspot_voucher(
         phone_number=data.phone_number,
         device_type=data.device_type,
         device_mac=trusted_context.client_mac,
+        purchase_context_mac=(
+            getattr(trusted_context, "purchase_context_mac", None)
+            or trusted_context.client_mac
+        ),
+        purchase_context_router_id=(
+            getattr(trusted_context, "purchase_context_router_id", None)
+            or trusted_context.router_id
+        ),
+        purchase_context_site_id=(
+            getattr(trusted_context, "purchase_context_site_id", None)
+            or trusted_context.site_id
+        ),
         trusted_site_id=trusted_context.site_id,
         trusted_router_id=trusted_context.router_id,
         idempotency_key=data.idempotency_key,
@@ -336,13 +348,20 @@ async def purchase_status(
         raise ConflictError("The trusted WiFi context is missing or expired. Reopen the WiFi sign-in page")
     normalized_mac = str(getattr(trusted, "client_mac", "")).replace("-", ":").upper()
     transaction_mac = str(getattr(tx, "device_mac", "")).replace("-", ":").upper()
+    initiating_mac = str(
+        getattr(tx, "purchase_context_mac", None)
+        or (transaction_mac if getattr(tx, "device_type", "this_device") == "this_device" else "")
+    ).replace("-", ":").upper()
+    initiating_router_id = str(getattr(tx, "purchase_context_router_id", None) or tx.router_id)
+    initiating_site_id = str(getattr(tx, "purchase_context_site_id", None) or tx.site_id)
     if (
-        not tx.router_id
-        or not tx.site_id
-        or str(tx.router_id) != str(trusted.router_id)
-        or str(tx.site_id) != str(trusted.site_id)
+        not initiating_router_id
+        or not initiating_site_id
+        or initiating_router_id != str(trusted.router_id)
+        or initiating_site_id != str(trusted.site_id)
         or not transaction_mac
-        or transaction_mac != normalized_mac
+        or not initiating_mac
+        or initiating_mac != normalized_mac
     ):
         raise ConflictError("This purchase does not belong to the currently verified WiFi device")
     settled = (
@@ -373,6 +392,7 @@ async def purchase_status(
             "voucher_code": tx.voucher_code if settled else None,
             "package_name": tx.account_reference if settled else None,
             "amount": tx.amount if settled else None,
+            "device_type": tx.device_type,
             "expires_at": expires_at.isoformat() if expires_at else None,
             "result_desc": tx.result_desc,
         },

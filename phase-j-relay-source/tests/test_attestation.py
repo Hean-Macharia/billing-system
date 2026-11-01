@@ -118,6 +118,67 @@ def test_negative_observation_is_signed_and_not_positive():
     assert len(result["signature"]) == 64
 
 
+def test_mac_only_request_and_negative_observation_keep_ip_null(monkeypatch):
+    now = REQUEST["requested_at"]
+    monkeypatch.setattr(server.time, "time", lambda: now)
+    request = {**REQUEST, "client_ip": None}
+    normalized = server._validate_attestation_request(request, ROUTER)
+    result = server.create_attestation(
+        normalized,
+        ROUTER,
+        {"client_ip": None, "observed": False, "evidence": {
+            "dhcp_lease_match": False,
+            "dhcp_lease_status": "missing",
+            "hotspot_host_match": False,
+            "observation_age_seconds": 0,
+        }},
+        TOKEN,
+        now=now,
+    )
+    assert result["attestation"]["client_ip"] is None
+    assert len(result["signature"]) == 64
+
+
+def test_mac_only_positive_observation_resolves_router_ip_for_fastapi(monkeypatch):
+    from app.core.config import settings
+    from app.services.hotspot_attestation_service import (
+        HotspotAttestationService,
+        verify_attestation_signature,
+    )
+
+    now = REQUEST["requested_at"]
+    monkeypatch.setattr(server.time, "time", lambda: now)
+    monkeypatch.setattr(server, "load_router_password", lambda: "test-router-password")
+    request = {**REQUEST, "client_ip": None}
+    observation = {
+        "client_ip": "192.168.89.120",
+        "observed": True,
+        "evidence": {
+            "dhcp_lease_match": True,
+            "dhcp_lease_status": "bound",
+            "hotspot_host_match": True,
+            "observation_age_seconds": 1,
+        },
+    }
+    reply = server.handle_attestation(
+        request, TOKEN, router=ROUTER, observer=lambda *_: observation
+    )
+    assert verify_attestation_signature(reply["attestation"], reply["signature"], TOKEN)
+
+    monkeypatch.setattr(settings, "router_relay_token", TOKEN)
+    service = HotspotAttestationService(
+        _NonceDB(request["nonce"], now), relay_client=object(), clock=lambda: now
+    )
+    verified = asyncio.run(service._verify_relay_reply(
+        ROUTER,
+        request["nonce"],
+        {"client_ip": None, "client_mac": "AA:BB:CC:DD:EE:FF"},
+        reply,
+    ))
+    assert verified["observed"] is True
+    assert verified["client_ip"] == "192.168.89.120"
+
+
 def test_stale_router_observation_is_never_signed():
     with pytest.raises(RuntimeError, match="stale"):
         server.create_attestation(
@@ -342,6 +403,30 @@ def test_routeros_observation_uses_only_the_selected_allowlisted_target(monkeypa
 
     assert connected_to == {"host": "10.30.1.1", "port": 8728, "username": "router-two"}
     assert result["observed"] is False
+
+
+def test_routeros_can_attest_a_mac_without_a_browser_supplied_ip(monkeypatch):
+    class FakeRouterOS:
+        def __init__(self, password, timeout):
+            assert password == "mock-only"
+
+        def connect(self):
+            return None
+
+        def query(self, command, attributes=None):
+            if command == "/ip/dhcp-server/lease/print":
+                return [{"address": "192.168.89.120", "mac-address": "AA:BB:CC:DD:EE:FF", "status": "bound"}]
+            if command == "/ip/hotspot/host/print":
+                return [{"address": "192.168.89.120", "mac-address": "AA:BB:CC:DD:EE:FF"}]
+            raise AssertionError("Attestation only uses read-only DHCP and HotSpot queries")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(routeros, "RouterOS", FakeRouterOS)
+    observed = routeros.observe_hotspot_client(None, REQUEST["client_mac"], "mock-only")
+    assert observed["observed"] is True
+    assert observed["client_ip"] == "192.168.89.120"
 
 
 @pytest.mark.parametrize("kind", ["unbound", "expired", "missing-host", "mismatched-host", "duplicate-lease", "duplicate-host", "malformed"])

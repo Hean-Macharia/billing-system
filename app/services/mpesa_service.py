@@ -678,6 +678,9 @@ class MpesaService:
         trusted_site_id: Optional[str] = None,
         trusted_router_id: Optional[str] = None,
         idempotency_key: Optional[str] = None,
+        purchase_context_mac: Optional[str] = None,
+        purchase_context_router_id: Optional[str] = None,
+        purchase_context_site_id: Optional[str] = None,
     ) -> MpesaTransactionInDB:
         plan = await self.db.hotspot_plans.find_one({"_id": ObjectId(plan_id)})
         if not plan:
@@ -695,6 +698,7 @@ class MpesaService:
             raise ValidationError("Trusted router and site context must be provided together")
 
         normalized_mac = device_mac.replace("-", ":").upper()
+        normalized_context_mac = (purchase_context_mac or normalized_mac).replace("-", ":").upper()
         if idempotency_key:
             prior = await self.collection.find_one({
                 "transaction_type": "hotspot_purchase",
@@ -706,6 +710,9 @@ class MpesaService:
                     and str(prior.get("phone_number")) == str(phone_number)
                     and str(prior.get("device_mac", "")).replace("-", ":").upper() == normalized_mac
                     and str(prior.get("device_type")) == str(device_type)
+                    and str(prior.get("purchase_context_mac") or prior.get("device_mac", "")).replace("-", ":").upper() == normalized_context_mac
+                    and str(prior.get("purchase_context_router_id") or prior.get("router_id") or "") == str(purchase_context_router_id or trusted_router_id or "")
+                    and str(prior.get("purchase_context_site_id") or prior.get("site_id") or "") == str(purchase_context_site_id or trusted_site_id or plan_site_id or "")
                     and str(prior.get("site_id") or "") == str(trusted_site_id or plan_site_id or "")
                     and str(prior.get("router_id") or "") == str(trusted_router_id or "")
                 )
@@ -729,6 +736,9 @@ class MpesaService:
             "purchase_idempotency_key": idempotency_key,
             "voucher_code": None,
             "device_type": device_type, "device_mac": normalized_mac,
+            "purchase_context_mac": normalized_context_mac,
+            "purchase_context_router_id": purchase_context_router_id or trusted_router_id,
+            "purchase_context_site_id": purchase_context_site_id or trusted_site_id or plan_site_id,
             "amount": plan["price"], "phone_number": phone_number,
             "account_reference": plan["name"], "transaction_desc": f"HotSpot: {plan['name']}",
             "status": MpesaTransactionStatus.PENDING.value,

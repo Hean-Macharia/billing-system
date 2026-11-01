@@ -229,3 +229,72 @@ async def test_purchase_status_rejects_context_for_different_device(monkeypatch)
     with pytest.raises(ConflictError, match="does not belong"):
         await hotspot.purchase_status("checkout-id", Response(), "opaque-context", object())
 
+
+@pytest.mark.asyncio
+async def test_target_device_purchase_status_is_bound_to_buyers_verified_context(monkeypatch):
+    transaction = MpesaTransactionInDB(
+        _id="target-transaction",
+        transaction_type="hotspot_purchase",
+        checkout_request_id="target-checkout",
+        hotspot_plan_id="plan-id",
+        status=MpesaTransactionStatus.SUCCESS,
+        settled=True,
+        settlement_status="completed", callback_received=True,
+        settlement_review_required=False, voucher_code="UK1G00O1RX",
+        mpesa_receipt_number="UK1G00O1RX", account_reference="bundle", amount=10,
+        phone_number="254700000000", transaction_desc="HotSpot bundle",
+        router_id="target-router", site_id="site-1", device_type="tv",
+        device_mac="BB:BB:BB:BB:BB:BB",
+        purchase_context_mac="AA:AA:AA:AA:AA:AA",
+        purchase_context_router_id="buyer-router",
+        purchase_context_site_id="site-1",
+    )
+
+    class FakeMpesa:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_checkout_id(self, _checkout):
+            return transaction
+
+    class FakeDb:
+        vouchers = SimpleNamespace(find_one=AsyncMock(return_value={"expiry_date": None}))
+
+    monkeypatch.setattr("app.services.mpesa_service.MpesaService", FakeMpesa)
+    monkeypatch.setattr(hotspot, "HotspotAttestationService", lambda _db: SimpleNamespace(
+        get_context=AsyncMock(return_value=SimpleNamespace(
+            router_id="buyer-router", site_id="site-1", client_mac="AA:AA:AA:AA:AA:AA"
+        ))
+    ))
+
+    result = await hotspot.purchase_status("target-checkout", Response(), "buyer-context", FakeDb())
+
+    assert result["data"]["settled"] is True
+    assert result["data"]["device_type"] == "tv"
+    assert result["data"]["access_token"] == "UK1G00O1RX"
+
+
+@pytest.mark.asyncio
+async def test_target_device_purchase_status_rejects_another_buyers_context(monkeypatch):
+    transaction = SimpleNamespace(
+        router_id="target-router", site_id="site-1", device_mac="BB:BB:BB:BB:BB:BB",
+        device_type="other", purchase_context_mac="AA:AA:AA:AA:AA:AA",
+        purchase_context_router_id="buyer-router", purchase_context_site_id="site-1",
+    )
+
+    class FakeMpesa:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_checkout_id(self, _checkout):
+            return transaction
+
+    monkeypatch.setattr("app.services.mpesa_service.MpesaService", FakeMpesa)
+    monkeypatch.setattr(hotspot, "HotspotAttestationService", lambda _db: SimpleNamespace(
+        get_context=AsyncMock(return_value=SimpleNamespace(
+            router_id="buyer-router", site_id="site-1", client_mac="CC:CC:CC:CC:CC:CC"
+        ))
+    ))
+    with pytest.raises(ConflictError, match="does not belong"):
+        await hotspot.purchase_status("target-checkout", Response(), "other-buyer-context", object())
+

@@ -31,7 +31,10 @@ class MpesaTransaction(BaseModel):
     site_id: Optional[str] = None  # server snapshot from the selected HotSpot plan
     router_id: Optional[str] = None  # trusted router snapshot for a HotSpot purchase
     device_type: Optional[str] = None  # HotSpot purchase device selection
-    device_mac: Optional[str] = None  # normalized verified client MAC for status binding
+    device_mac: Optional[str] = None  # normalized target MAC verified by the router
+    purchase_context_mac: Optional[str] = None  # verified captive device that initiated checkout
+    purchase_context_router_id: Optional[str] = None
+    purchase_context_site_id: Optional[str] = None
     purchase_idempotency_key: Optional[str] = None
     voucher_code: Optional[str] = None  # populated once a hotspot_purchase settles successfully
     amount: float = Field(..., gt=0)

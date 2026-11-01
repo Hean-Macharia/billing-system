@@ -42,6 +42,9 @@ class TrustedRouterContext:
     client_ip: str
     client_mac: str
     context_token: Optional[str] = None
+    purchase_context_mac: Optional[str] = None
+    purchase_context_router_id: Optional[str] = None
+    purchase_context_site_id: Optional[str] = None
 
 
 def normalize_mac(value: str) -> str:
@@ -277,11 +280,19 @@ class HotspotAttestationService:
             raise ServiceUnavailableError("The router relay attestation identifies an unexpected router or site")
         if normalize_mac(str(payload["client_mac"])) != challenge["client_mac"]:
             raise ServiceUnavailableError("The router relay attestation MAC does not match the request")
-        attested_ip = normalize_client_ip(str(payload["client_ip"]))
-        if challenge["client_ip"] and attested_ip != challenge["client_ip"]:
-            raise ServiceUnavailableError("The router relay attestation IP does not match the request")
+        raw_attested_ip = payload["client_ip"]
+        if raw_attested_ip is None:
+            if challenge["client_ip"]:
+                raise ServiceUnavailableError("The router relay attestation omitted the requested client IP")
+            attested_ip = None
+        else:
+            attested_ip = normalize_client_ip(str(raw_attested_ip))
+            if challenge["client_ip"] and attested_ip != challenge["client_ip"]:
+                raise ServiceUnavailableError("The router relay attestation IP does not match the request")
         if not isinstance(payload["observed"], bool) or not isinstance(payload["evidence"], dict):
             raise ServiceUnavailableError("The router relay observation evidence is malformed")
+        if payload["observed"] and attested_ip is None:
+            raise ServiceUnavailableError("A positive router observation must include the resolved client IP")
 
         consumed = await self.db.router_attestation_nonces.find_one_and_update(
             {"nonce": nonce, "state": "pending", "expires_at": {"$gt": datetime.fromtimestamp(self.clock(), timezone.utc)}},
@@ -540,4 +551,12 @@ class HotspotAttestationService:
             observed = await self.observe_device(requested_ip, normalized_mac, correlation_id=correlation_id)
         if observed.site_id != context.site_id:
             raise ConflictError("The purchase device is not connected at the verified site")
-        return observed
+        return TrustedRouterContext(
+            router_id=observed.router_id,
+            site_id=observed.site_id,
+            client_ip=observed.client_ip,
+            client_mac=observed.client_mac,
+            purchase_context_mac=context.client_mac,
+            purchase_context_router_id=context.router_id,
+            purchase_context_site_id=context.site_id,
+        )

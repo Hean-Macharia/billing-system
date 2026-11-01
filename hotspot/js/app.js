@@ -10,7 +10,7 @@ function getDefaultApiBase() {
     }
 
     let API_BASE_URL = localStorage.getItem('hotspot_api_base') || getDefaultApiBase();
-    const SUPPORT_PHONE = '+254716000034';
+    const SUPPORT_PHONE = '+254791196121';
     const SUPPORT_EMAIL = 'heannjuki@gmail.com';
     const PORTAL_PARAMS = new URLSearchParams(window.location.search);
     const CAPTIVE_REDIRECT = MikrotikLogin.parseRedirectParameters(window.location.search);
@@ -411,23 +411,24 @@ function getDefaultApiBase() {
           const rate = plan.rate_limit || 'Speed not specified';
           const devices = plan.max_devices || 1;
           const price = new Intl.NumberFormat('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(plan.price || 0));
+          const badge = ['HOT_DEAL', 'LIMITED'].includes(String(plan.badge || '').toUpperCase())
+            ? `<span class="plan-ribbon ${String(plan.badge).toLowerCase() === 'hot_deal' ? 'hot-deal' : 'limited'}">${String(plan.badge).toUpperCase() === 'HOT_DEAL' ? 'HOT DEAL' : 'LIMITED'}</span>`
+            : '';
           return `
             <article class="plan-card" data-plan-index="${index}" tabindex="0" role="button" aria-label="Select ${escapeHtml(title)}">
+              ${badge}
               <div class="pack-visual">
-                <div class="signal">${Icons.wifi}</div>
+                <h3>${escapeHtml(title)}</h3>
+                <span class="pack-duration">◷ ${escapeHtml(duration)}</span>
+                <span class="pack-devices">▯ Up to ${devices} device${devices > 1 ? 's' : ''}</span>
               </div>
               <div class="plan-body">
-                <div class="plan-meta">
-                  <span>Internet access</span>
-                  <span>${duration}</span>
-                </div>
-                <h3>${escapeHtml(title)}</h3>
+                <div class="plan-description">${escapeHtml(plan.description || formatDataAllowance(plan))}</div>
                 <div class="sub">${escapeHtml(formatDataAllowance(plan))}</div>
-                <div class="sub">${escapeHtml(rate)} · Up to ${devices} device${devices > 1 ? 's' : ''}</div>
-                ${plan.description ? `<div class="sub">${escapeHtml(plan.description)}</div>` : ''}
+                <div class="sub">${escapeHtml(rate)}</div>
                 <div class="plan-footer">
                   <div class="plan-price">${escapeHtml(plan.currency || 'KES')} ${price}</div>
-                  <span class="plan-btn">View package</span>
+                  <span class="plan-btn">View package →</span>
                 </div>
               </div>
             </article>
@@ -480,9 +481,9 @@ function getDefaultApiBase() {
       const devices = Number(plan.max_devices || 1);
       const price = new Intl.NumberFormat('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(plan.price || 0));
       overlay.innerHTML = `
-        <div class="sheet">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="purchase-title">
           <div class="sheet-header">
-            <h3>Complete payment</h3>
+            <h3 id="purchase-title">Complete payment</h3>
             <button class="sheet-close" type="button" aria-label="Close">×</button>
           </div>
           <div class="sheet-body">
@@ -502,14 +503,24 @@ function getDefaultApiBase() {
               <strong>${escapeHtml(plan.currency || 'KES')} ${price}</strong>
             </div>
             <form id="buy-form">
-              <label>Who are you buying access for?</label>
-              <div class="device-options" aria-label="Purchase device"><strong>This device</strong><span>Device details are read automatically from the MikroTik sign-in context.</span></div>
-              <p class="hint">Connecting a TV or another device requires a secure pairing feature that is not available yet.</p>
-              <div id="target-device-fields"></div>
+              <label>Purchase for</label>
+              <div class="device-choice-grid" role="group" aria-label="Choose a device">
+                <button class="device-choice is-selected" type="button" data-device-type="this_device" aria-pressed="true"><span aria-hidden="true">📱</span><strong>This device</strong><i aria-hidden="true">✓</i></button>
+                <button class="device-choice" type="button" data-device-type="tv" aria-pressed="false"><span aria-hidden="true">📺</span><strong>TV</strong><i aria-hidden="true">•</i></button>
+                <button class="device-choice" type="button" data-device-type="other" aria-pressed="false"><span aria-hidden="true">💻</span><strong>Other device</strong><i aria-hidden="true">•</i></button>
+              </div>
+              <p class="hint" id="device-selection-help">This device is verified by the WiFi router.</p>
+              <div id="target-device-fields" hidden>
+                <label for="target-device-mac">Target device MAC address</label>
+                <input type="text" id="target-device-mac" inputmode="text" autocomplete="off" placeholder="AA:BB:CC:DD:EE:FF" maxlength="17" aria-describedby="target-device-help" />
+                <label for="target-device-ip">Target device IP address <span>(optional)</span></label>
+                <input type="text" id="target-device-ip" inputmode="decimal" autocomplete="off" placeholder="192.168.89.120" />
+                <p class="hint" id="target-device-help">The target device must be connected to this WiFi. Find its MAC in the device network settings; the router verifies it before payment starts.</p>
+              </div>
               <div id="device-status" class="device-status" role="status" aria-live="polite"></div>
-              <label for="phone-input">M-Pesa number</label>
-              <input type="tel" id="phone-input" inputmode="numeric" placeholder="0712345678" required />
-              <div class="hint">We will send an STK push to this number.</div>
+              <label for="phone-input">M-Pesa phone number</label>
+              <input type="tel" id="phone-input" inputmode="tel" autocomplete="tel" placeholder="0791196121" required />
+              <div class="hint">The M-Pesa prompt will be sent to this phone.</div>
               <div class="error-text" id="buy-error"></div>
               <button type="submit" class="btn btn-primary" id="buy-submit">Complete payment · ${escapeHtml(plan.currency || 'KES')} ${price}</button>
               <button type="button" class="btn btn-ghost" id="cancel-btn">Cancel</button>
@@ -523,10 +534,32 @@ function getDefaultApiBase() {
       overlay.querySelector('.sheet-close').onclick = close;
       overlay.querySelector('#cancel-btn').onclick = close;
 
-      const selectedDevice = 'this_device';
+      let selectedDevice = 'this_device';
       const normalizeMac = (mac) => String(mac || '').replace(/-/g, ':').toUpperCase();
       const verifiedContextAvailable = Boolean(readHotspotContext());
       const verifiedMac = verifiedContextAvailable ? normalizeMac(CLIENT_MAC) : '';
+      const targetFields = overlay.querySelector('#target-device-fields');
+      const targetMacInput = overlay.querySelector('#target-device-mac');
+      const targetIpInput = overlay.querySelector('#target-device-ip');
+      const selectionHelp = overlay.querySelector('#device-selection-help');
+      overlay.querySelectorAll('[data-device-type]').forEach((choice) => {
+        choice.addEventListener('click', () => {
+          selectedDevice = choice.dataset.deviceType;
+          overlay.querySelectorAll('[data-device-type]').forEach((button) => {
+            const active = button === choice;
+            button.classList.toggle('is-selected', active);
+            button.setAttribute('aria-pressed', String(active));
+            button.querySelector('i').textContent = active ? '✓' : '•';
+          });
+          const isCurrentDevice = selectedDevice === 'this_device';
+          targetFields.hidden = isCurrentDevice;
+          targetMacInput.required = !isCurrentDevice;
+          selectionHelp.textContent = isCurrentDevice
+            ? 'This device is verified by the WiFi router.'
+            : 'Enter the target device MAC. It must be connected to this WiFi so the router can verify it before payment.';
+          if (!isCurrentDevice) targetMacInput.focus();
+        });
+      });
       const deviceStatus = overlay.querySelector('#device-status');
       deviceStatus.dataset.verified = verifiedMac ? 'true' : 'false';
       deviceStatus.dataset.state = verifiedMac ? 'verified' : 'failed';
@@ -553,6 +586,16 @@ function getDefaultApiBase() {
           return;
         }
 
+        const targetMac = selectedDevice === 'this_device' ? verifiedMac : normalizeMac(targetMacInput.value);
+        const targetIp = selectedDevice === 'this_device' ? CLIENT_IP : targetIpInput.value.trim();
+        if (!/^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(targetMac)) {
+          errBox.textContent = selectedDevice === 'this_device'
+            ? 'The verified WiFi device MAC is missing. Reopen the WiFi sign-in page and retry.'
+            : 'Enter the target device MAC in a format such as AA:BB:CC:DD:EE:FF.';
+          errBox.style.display = 'block';
+          return;
+        }
+
         const phone = normalizeKenyanPhone(phoneInput.value.trim());
         if (!phone) {
           errBox.textContent = 'Enter a valid Safaricom number, e.g. 0712345678';
@@ -570,9 +613,9 @@ function getDefaultApiBase() {
               plan_id: plan._id,
               phone_number: phone,
               device_type: selectedDevice,
-              device_mac: verifiedMac,
+              device_mac: targetMac,
               idempotency_key: overlay.dataset.purchaseKey,
-              ...(CLIENT_IP ? { ip_address: CLIENT_IP } : {})
+              ...(targetIp ? { ip_address: targetIp } : {})
             },
             headers: readHotspotContext() ? { 'X-Hotspot-Context': readHotspotContext() } : {},
           });
@@ -653,6 +696,24 @@ function getDefaultApiBase() {
 
     function showSuccessScreen(sheet, purchase) {
       const { accessToken, loginUsername, result } = purchase;
+      const isCurrentDevice = !result.device_type || result.device_type === 'this_device';
+      if (!isCurrentDevice) {
+        sheet.innerHTML = `
+          <div class="status-screen">
+            <div class="status-icon success">${Icons.check}</div>
+            <h3>Payment confirmed</h3>
+            <p>${escapeHtml(result.package_name || 'Your internet package')} is ready for the selected device.</p>
+            <div class="voucher-box" id="voucher-copy"><div class="code">${escapeHtml(accessToken)}</div><div class="tap">M-Pesa receipt · Tap to copy</div></div>
+            <p>On the target device, connect to DEVZEN CREATIONS WiFi and enter this M-Pesa receipt on the sign-in page. The router will verify the device and connect it without another payment.</p>
+            <p class="device-status">This purchase is bound to the target MAC you entered. Keep the receipt for reconnecting that device.</p>
+          </div>`;
+        sheet.querySelector('#voucher-copy').onclick = () => {
+          navigator.clipboard?.writeText(accessToken);
+          const tap = sheet.querySelector('.voucher-box .tap');
+          if (tap) tap.textContent = 'Copied!';
+        };
+        return;
+      }
       sheet.innerHTML = `
         <div class="status-screen">
           <div class="status-icon success">${Icons.check}</div>

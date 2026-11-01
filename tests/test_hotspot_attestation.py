@@ -431,6 +431,43 @@ async def test_bad_signature_and_malformed_response_are_rejected(attestation_db,
 
 
 @pytest.mark.asyncio
+async def test_mac_only_negative_attestation_accepts_signed_null_ip(attestation_db, monkeypatch):
+    router_id, site_id = await seed_router(attestation_db, "Nyaururu edge", "Nyaururu")
+    await create_nonce_index(attestation_db)
+    service = make_service(attestation_db, FakeRelay(), monkeypatch)
+    candidate = {"router_id": router_id, "site_id": site_id}
+    nonce, challenge = await service._new_challenge(candidate, None, CLIENT_MAC)
+    payload = {
+        "issuer": ATTESTATION_ISSUER,
+        "audience": ATTESTATION_AUDIENCE,
+        "router_id": router_id,
+        "site_id": site_id,
+        "client_ip": None,
+        "client_mac": CLIENT_MAC,
+        "issued_at": NOW,
+        "expires_at": NOW + 30,
+        "nonce": nonce,
+        "observed": False,
+        "evidence": {
+            "dhcp_lease_match": False,
+            "dhcp_lease_status": "missing",
+            "hotspot_host_match": False,
+            "observation_age_seconds": 1,
+        },
+    }
+
+    result = await service._verify_relay_reply(
+        candidate,
+        nonce,
+        challenge,
+        {"attestation": payload, "signature": sign_attestation(payload, TOKEN)},
+    )
+
+    assert result["observed"] is False
+    assert result["client_ip"] is None
+
+
+@pytest.mark.asyncio
 async def test_concurrent_replay_only_consumes_nonce_once(attestation_db, monkeypatch):
     router_id, site_id = await seed_router(attestation_db, "Nakuru edge", "Nakuru")
     await create_nonce_index(attestation_db)

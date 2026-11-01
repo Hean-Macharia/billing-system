@@ -245,15 +245,16 @@ def _validate_attestation_request(request, router):
         raise PermissionError("Requested router/site is not configured")
 
     client_ip = request.get("client_ip")
-    if not isinstance(client_ip, str) or not client_ip:
-        raise ValueError("Client IP is required by the current FastAPI contract")
-    try:
-        parsed_ip = ipaddress.ip_address(client_ip)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Invalid client IP") from exc
-    if not parsed_ip.is_private or parsed_ip.is_loopback or parsed_ip.is_link_local or parsed_ip.is_multicast:
-        raise ValueError("Client IP must be a private HotSpot address")
-    request["client_ip"] = str(parsed_ip)
+    if client_ip is not None:
+        if not isinstance(client_ip, str) or not client_ip:
+            raise ValueError("Invalid client IP")
+        try:
+            parsed_ip = ipaddress.ip_address(client_ip)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid client IP") from exc
+        if not parsed_ip.is_private or parsed_ip.is_loopback or parsed_ip.is_link_local or parsed_ip.is_multicast:
+            raise ValueError("Client IP must be a private HotSpot address")
+        request["client_ip"] = str(parsed_ip)
 
     mac = request.get("client_mac")
     if not isinstance(mac, str) or not re.fullmatch(r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}", mac):
@@ -322,10 +323,9 @@ def create_attestation(request, router, observation, relay_token, now=None):
         if request["client_ip"] and client_ip != request["client_ip"]:
             raise AttestationObservationError("Router negative observation identifies another IP")
     else:
-        # The current FastAPI verifier requires a syntactically valid client
-        # IP even for signed negative observations. Bind the negative result to
-        # the original request hint; this value is never treated as observed.
-        client_ip = request["client_ip"]
+        # MAC-only requests remain null on negative observations. Positive
+        # observations resolve the real address from a bound lease below.
+        client_ip = None
 
     attestation = {
         "issuer": ATTESTATION_ISSUER,

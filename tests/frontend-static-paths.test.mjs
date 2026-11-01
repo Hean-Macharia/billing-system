@@ -27,16 +27,23 @@ test('local HTML scripts and styles resolve from every mounted page', () => {
     ];
     for (const reference of refs) {
       if (/^(?:https?:|data:|#|javascript:)/i.test(reference)) continue;
-      const resolved = path.resolve(path.dirname(file), reference.split(/[?#]/, 1)[0]);
+      const assetPath = reference.split(/[?#]/, 1)[0];
+      const resolved = assetPath.startsWith('/')
+        ? path.resolve(root, assetPath.slice(1))
+        : path.resolve(path.dirname(file), assetPath);
       if (!existsSync(resolved)) failures.push(`${path.relative(root, file)} → ${reference}`);
     }
   }
   assert.deepEqual(failures, []);
 });
 
-test('mounted HotSpot purchase cannot ask the customer to type a device MAC', () => {
+test('mounted HotSpot purchase accepts a target MAC only for router re-attestation', () => {
   const source = readFileSync(path.join(root, 'hotspot/js/app.js'), 'utf8');
-  assert.doesNotMatch(source, /target-device-id|TV MAC address|Device MAC address/);
+  assert.match(source, /data-device-type="tv"/);
+  assert.match(source, /data-device-type="other"/);
+  assert.match(source, /id="target-device-mac"/);
+  assert.match(source, /device_mac: targetMac/);
+  assert.match(source, /router can verify it before payment/i);
   assert.match(source, /X-Hotspot-Context/);
-  assert.match(source, /hotspot\/devices\/attest/);
+  assert.match(source, /device verification is required/i);
 });
