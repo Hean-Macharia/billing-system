@@ -1,0 +1,9 @@
+export const $=(s,r=document)=>r.querySelector(s);export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export const formatCurrency=n=>`KES ${Number(n||0).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+export const formatDate=x=>{if(!x)return'—';const d=new Date(x);return Number.isNaN(+d)?'—':d.toLocaleDateString('en-KE',{day:'2-digit',month:'short',year:'numeric'})};
+export const timeAgo=x=>{if(!x)return'—';const seconds=Math.round((new Date(x)-Date.now())/1000),units=[['year',31536000],['month',2592000],['day',86400],['hour',3600],['minute',60]];const f=new Intl.RelativeTimeFormat('en',{numeric:'auto'});for(const[u,n]of units)if(Math.abs(seconds)>=n)return f.format(Math.round(seconds/n),u);return f.format(seconds,'second')};
+export const daysUntil=x=>x?Math.ceil((new Date(x).setHours(0,0,0,0)-new Date().setHours(0,0,0,0))/86400000):null;
+export const formatPhone=x=>{const d=String(x||'').replace(/\D/g,'');if(d.startsWith('254')&&d.length===12)return`+254 ${d.slice(3,6)} ${d.slice(6,9)} ${d.slice(9)}`;return x||''};
+export const formatData=b=>{const n=Number(b)||0;return n>=1073741824?`${(n/1073741824).toFixed(1)} GB`:n>=1048576?`${(n/1048576).toFixed(0)} MB`:`${(n/1024).toFixed(0)} KB`};
+export function toast(message,type='info'){let root=$('#toast-stack');if(!root){root=document.createElement('div');root.id='toast-stack';root.className='toast-stack';root.setAttribute('aria-live','polite');document.body.append(root)}const item=document.createElement('div');item.className=`toast-item ${type}`;item.textContent=message;root.append(item);setTimeout(()=>item.remove(),4500)}
+window.addEventListener('dz:toast',e=>toast(e.detail?.message||'Something happened',e.detail?.type||'info'));

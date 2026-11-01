@@ -93,6 +93,9 @@ class PublicFrontendFiles(StaticFiles):
         allowed = (
             path in self.PAGES
             or path.startswith(("css/", "js/"))
+            # Shared frontend assets are public by design. Keep this allowlist
+            # narrow so adding the shared layer does not expose repository files.
+            or path.startswith("frontend/shared/css/")
             or (path.startswith("assets/") and Path(path).suffix.lower() in self.IMAGE_SUFFIXES)
         )
         if not allowed:

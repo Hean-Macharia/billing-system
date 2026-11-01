@@ -38,6 +38,17 @@ class TestRootEndpoint:
         assert "DEVZEN CREATIONS" in secondary_portal.text
 
     @pytest.mark.asyncio
+    async def test_shared_theme_is_served_without_exposing_repository_files(self, client):
+        theme = await client.get("/frontend/shared/css/modern-theme.css")
+        assert theme.status_code == 200
+        assert "--dz-bg: #0f1629" in theme.text
+
+        # The shared asset allowlist must not turn the repository root into a
+        # general-purpose file server.
+        private_file = await client.get("/frontend/shared/../../.env")
+        assert private_file.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_hotspot_static_entry_serves_direct_and_routeros_redirect_urls(self, client):
         captive_query = (
             "?link-login-only=http%3A%2F%2Flogin.hean.local%2Flogin"

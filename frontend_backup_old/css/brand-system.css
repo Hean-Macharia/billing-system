@@ -1,0 +1,85 @@
+/* Shared DevZen design tokens and small cross-app refinements. */
+:root {
+  color-scheme: light;
+  --primary: #2563EB;
+  --primary-hover: #1D4ED8;
+  --primary-light: #DBEAFE;
+  --primary-soft: #EFF6FF;
+  --primary-grad: linear-gradient(135deg, #1D4ED8, #3B82F6);
+  --accent-blue: #0EA5E9;
+  --focus-ring: 0 0 0 3px rgb(37 99 235 / 18%);
+}
+
+[data-theme="dark"] {
+  --primary: #60A5FA;
+  --primary-hover: #93C5FD;
+  --primary-light: rgb(37 99 235 / 18%);
+  --primary-soft: rgb(37 99 235 / 10%);
+  --primary-grad: linear-gradient(135deg, #2563EB, #60A5FA);
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid rgb(37 99 235 / 48%);
+  outline-offset: 2px;
+}
+
+.customer-logo rect,
+.brand-mark rect { fill: var(--primary); }
+.customer-welcome {
+  background: linear-gradient(120deg, #1E3A8A, #2563EB 58%, #0EA5E9);
+}
+.customer-nav a:hover,
+.customer-nav a.active { background: var(--primary-light); color: var(--primary-hover); }
+
+/* HotSpot's legacy stylesheet remains in place; map its accent tokens here. */
+.page-shell {
+  --accent: #2563EB;
+  --accent-dark: #1D4ED8;
+  --accent-soft: #DBEAFE;
+}
+.hotspot-actions .cta-mini,
+.resource-action { color: #1D4ED8; }
+.page-shell { background: radial-gradient(ellipse at 15% 0, #EFF6FF, transparent 38%), var(--bg); }
+.page-shell .hero-card { background: linear-gradient(120deg, #fff 0%, #F8FBFF 60%, #EFF6FF); border-color: #DBEAFE; }
+.page-shell .eyebrow { border-color: #DBEAFE; }
+.page-shell .plan-card:hover,
+.page-shell .panel:hover,
+.page-shell .info-box:hover { border-color: #BFDBFE; }
+.page-shell .button-primary,
+.page-shell .btn-primary,
+.page-shell .primary-button,
+.page-shell button[type="submit"] { background: var(--primary-grad); }
+.page-shell .login-brand { background: linear-gradient(145deg, #EFF6FF, #fff 55%, #F0F9FF); }
+.login-customer .login-brand { background: linear-gradient(145deg, #EFF6FF, #fff 55%, #F0F9FF); }
+.login-wrap .login-brand { background: linear-gradient(145deg, #EFF6FF, #fff 55%, #F0F9FF); }
+.login-wrap .login-brand::after { background: #BFDBFE88; }
+.login-wrap .login-brand::before { background: #BAE6FD77; }
+.skeleton-plan { display: grid; gap: 14px; min-height: 250px; align-content: center; }
+.skeleton-plan span { display: block; height: 14px; border-radius: 8px; background: linear-gradient(100deg, #EAF0F8 20%, #F8FAFC 48%, #EAF0F8 76%); background-size: 220% 100%; animation: dz-shimmer 1.4s ease-in-out infinite; }
+.skeleton-plan span:first-child { width: 42%; height: 22px; }
+.skeleton-plan span:nth-child(2) { width: 86%; height: 32px; }
+.skeleton-plan span:last-child { width: 60%; }
+[data-state="verifying"] { color: #1D4ED8; }
+[data-state="verified"] { color: #047857; }
+[data-state="failed"] { color: #B91C1C; }
+@keyframes dz-shimmer { to { background-position: -220% 0; } }
+
+@media (max-width: 767px) {
+  .customer-main .table-wrap table,
+  .customer-main .table-wrap thead,
+  .customer-main .table-wrap tbody,
+  .customer-main .table-wrap tr,
+  .customer-main .table-wrap th,
+  .customer-main .table-wrap td { display: block; }
+  .customer-main .table-wrap thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .customer-main .table-wrap tbody tr { padding: 9px 12px; border-top: 1px solid var(--border); white-space: normal; }
+  .customer-main .table-wrap td { display: flex; justify-content: space-between; gap: 14px; padding: 7px 0; border: 0; overflow-wrap: anywhere; }
+  .customer-main .table-wrap td::before { content: attr(data-label); min-width: 88px; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+}
+.plan-card .button-primary,
+.plan-card .btn-primary,
+.voucher-login .btn-primary { background: var(--primary-grad); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

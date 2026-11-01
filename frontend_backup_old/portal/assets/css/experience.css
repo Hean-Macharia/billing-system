@@ -1,0 +1,24 @@
+:root { --signal: #C62828; --signal-soft: #FCEEEF; --paper: #F7F8FA; --line: #E7E9EF; --shadow: 0 18px 44px -26px rgba(70,24,26,.25); }
+html, body { background: #F7F8FA; }
+.topbar { height: 64px; padding-inline: max(16px,calc((100vw - 900px)/2)); box-shadow: 0 4px 18px -16px rgba(20,25,35,.3); }
+.topbar .mark { background: linear-gradient(135deg,#D83A3D,#A91F24); box-shadow: 0 6px 16px -8px rgba(185,31,36,.6); }
+.tabbar { scrollbar-width: thin; }
+.tabbar a { transition: color .15s ease, background .15s ease; }
+.tabbar a:hover { color: #A51F23; background: #FFF7F7; }
+.tabbar a.active { color: #A51F23; border-bottom-color: #C62828; }
+.shell-body { max-width: 820px; padding-top: 26px; }
+.card, .hero-balance, .stat-box { border-radius: 16px; box-shadow: 0 8px 22px -22px rgba(15,23,42,.38); }
+.card { border-color: #E9EBF0; transition: transform .18s ease, box-shadow .18s ease; }
+.card:hover { box-shadow: 0 16px 30px -26px rgba(45,25,28,.35); }
+.hero-balance { background: linear-gradient(135deg,#A51F23,#D83A3D 68%,#E9595B); position: relative; overflow: hidden; }
+.hero-balance::after { content: ''; position: absolute; width: 210px; height: 210px; right: -65px; top: -100px; border: 1px solid rgba(255,255,255,.18); border-radius: 50%; box-shadow: 0 0 0 24px rgba(255,255,255,.05),0 0 0 48px rgba(255,255,255,.035); pointer-events: none; }
+.btn-primary { background: linear-gradient(135deg,#D83A3D,#A91F24); box-shadow: 0 8px 16px -10px rgba(145,24,29,.7); }
+.btn-primary:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.btn { transition: transform .16s ease, filter .16s ease, box-shadow .16s ease; }
+.api-status { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; background: #F0FBF5; color: #177245; padding: 5px 9px; font-size: 10px; font-weight: 700; }
+.api-status i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #20A464; }
+.api-status-offline { background: #FFF4F4; color: #B4232A; }
+.api-status-offline i { background: #D93239; }
+.api-status-checking i { background: #B5BBC5; animation: pulse-dot 1s ease-in-out infinite; }
+@keyframes pulse-dot { 50% { opacity: .35; transform: scale(.75); } }
+@media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration: .001ms !important; transition-duration: .001ms !important; } }

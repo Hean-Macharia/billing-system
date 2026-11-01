@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta name="referrer" content="no-referrer">
+  <title>DEVZEN CREATIONS WiFi</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: #f5f7fb; color: #172033; }
+    main { width: min(100%, 420px); padding: 28px; border: 1px solid #e3e8f0; border-radius: 18px; background: #fff; box-shadow: 0 16px 48px rgb(20 35 60 / 10%); text-align: center; }
+    h1 { margin: 0 0 8px; color: #1264d8; font-size: 1.35rem; }
+    p { margin: 0; color: #586579; line-height: 1.6; }
+    button { min-height: 48px; margin-top: 20px; padding: 0 20px; border: 0; border-radius: 12px; background: #1264d8; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+    button:focus-visible { outline: 3px solid #f0b429; outline-offset: 3px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>DEVZEN CREATIONS WiFi</h1>
+    <p id="status" role="status" aria-live="polite">Opening the secure WiFi sign-in page…</p>
+
+    <form id="portal" method="get" action="https://billing-system-5ckp.onrender.com/hotspot/">
+      <!-- Keep RouterOS values intact. The hosted portal parses and validates them. -->
+      <input type="hidden" name="link-login-only" value="$(link-login-only)">
+      <input type="hidden" name="link-orig" value="$(link-orig-esc)">
+      <input type="hidden" name="chap-id" value="$(chap-id)">
+      <input type="hidden" name="chap-challenge" value="$(chap-challenge)">
+      <input type="hidden" name="client_ip" value="$(ip)">
+      <input type="hidden" name="client_mac" value="$(mac)">
+      <input type="hidden" name="router_error" value="$(error)">
+      <noscript><button type="submit">Open WiFi sign-in</button></noscript>
+    </form>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+      var form = document.getElementById('portal');
+      var status = document.getElementById('status');
+      if (!form || !form.action) {
+        status.textContent = 'The WiFi sign-in page could not be opened. Please reconnect or contact network support.';
+        return;
+      }
+
+      // Do not decode, hex-encode, or otherwise rewrite CHAP fields here.
+      // RouterOS 6 may substitute three-digit octal byte escapes (for example \\213).
+      // The hosted portal preserves and interprets those bytes for HTTP-CHAP.
+      status.textContent = 'Redirecting to DEVZEN CREATIONS WiFi…';
+      window.setTimeout(function () {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.submit();
+      }, 0);
+    }());
+  </script>
+</body>
+</html>

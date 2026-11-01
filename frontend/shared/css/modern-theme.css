@@ -1,0 +1,144 @@
+/* DEVZEN CREATIONS shared dark SaaS theme. Loaded after each app's existing
+   stylesheet so this changes presentation without replacing page workflows. */
+:root {
+  color-scheme: dark;
+  --dz-bg: #0f1629;
+  --dz-surface: #1e2738;
+  --dz-surface-raised: #242f43;
+  --dz-border: #2a3550;
+  --dz-cyan: #27b5f5;
+  --dz-cyan-hover: #52c5fa;
+  --dz-amber: #f5a54a;
+  --dz-red: #e53935;
+  --dz-slate: #5b6b86;
+  --dz-green: #27c48b;
+  --dz-text: #f4f7fc;
+  --dz-muted: #a6b2c8;
+  --dz-shadow: 0 18px 48px rgb(0 0 0 / 24%);
+  --bg: var(--dz-bg);
+  --surface: var(--dz-surface);
+  --panel: var(--dz-surface);
+  --panel-alt: var(--dz-surface-raised);
+  --text: var(--dz-text);
+  --ink: var(--dz-text);
+  --muted: var(--dz-muted);
+  --border: var(--dz-border);
+  --line: var(--dz-border);
+  --sidebar: #141e31;
+  --primary: var(--dz-cyan);
+  --primary-hover: var(--dz-cyan-hover);
+  --primary-light: rgb(39 181 245 / 17%);
+  --primary-soft: rgb(39 181 245 / 10%);
+  --primary-grad: linear-gradient(135deg, #1599db, #27b5f5);
+  --accent: var(--dz-cyan);
+  --accent-dark: #1599db;
+  --accent-soft: rgb(39 181 245 / 14%);
+  --success: var(--dz-green);
+  --danger: var(--dz-red);
+  --warning: var(--dz-amber);
+  --info: var(--dz-cyan);
+  --shadow: var(--dz-shadow);
+  --shadow-sm: 0 8px 22px rgb(0 0 0 / 16%);
+  --shadow-lg: 0 24px 70px rgb(0 0 0 / 36%);
+  --ease: cubic-bezier(.2, .75, .25, 1);
+  font-family: Inter, Poppins, system-ui, sans-serif;
+}
+
+html { background: var(--dz-bg); color-scheme: dark; }
+body {
+  color: var(--dz-text);
+  background: radial-gradient(ellipse at 50% -22%, rgb(39 181 245 / 12%), transparent 48%), var(--dz-bg);
+}
+::selection { color: #fff; background: #087eb5; }
+:where(button, a, input, select, textarea, summary):focus-visible {
+  outline: 3px solid rgb(39 181 245 / 65%);
+  outline-offset: 3px;
+}
+a { color: var(--dz-cyan); }
+hr { border-color: var(--dz-border); opacity: 1; }
+
+/* Shared admin and customer application surfaces. */
+.sidebar, .customer-header, .topbar, .panel, .card, .stat,
+.login-card, .modal, .drawer, .customer-kpi, .support-message,
+.table-tools, .toast, .dropdown-menu, .list-group-item {
+  color: var(--dz-text);
+  background-color: var(--dz-surface);
+  border-color: var(--dz-border);
+}
+.sidebar { background: #141e31; box-shadow: 12px 0 40px rgb(0 0 0 / 13%); }
+.topbar, .customer-header { background-color: rgb(20 30 49 / 92%); }
+.workspace, .customer-app, .customer-main, .main, .login-wrap,
+.login-card-wrap { color: var(--dz-text); background: transparent; }
+.login-brand { color: var(--dz-text); background: linear-gradient(145deg, #172b43, #111a2c 62%, #19283a); }
+.login-brand .login-sub, .login-brand .status-strip { color: var(--dz-muted); }
+.customer-welcome { background: linear-gradient(120deg, #123c60, #087eb5 62%, #164768); }
+.customer-welcome p { color: #d5effb; }
+.nav-link:hover, .nav-link.active, .customer-nav a:hover,
+.customer-nav a.active { color: var(--dz-cyan); background: rgb(39 181 245 / 13%); }
+.nav-link.active:before { background: var(--dz-cyan); }
+.btn, button, .form-control, .form-select, input, select, textarea,
+.input, .field input, .field select, .field textarea, .search-input {
+  color: var(--dz-text);
+}
+.btn:not(.btn-primary):not(.btn-danger), .form-control, .form-select,
+input, select, textarea, .input, .field input, .field select,
+.field textarea, .search-input {
+  background-color: #151f32;
+  border-color: var(--dz-border);
+}
+input::placeholder, textarea::placeholder { color: #8492aa; opacity: 1; }
+.btn-primary { color: #04131d; background: var(--primary-grad); box-shadow: 0 9px 22px rgb(39 181 245 / 18%); }
+.btn-primary:hover { color: #04131d; filter: brightness(1.08); }
+.btn-danger { color: #ff9b98; background: rgb(229 57 53 / 12%); border-color: rgb(229 57 53 / 35%); }
+.badge { background: #2a3550; color: #d7e0ef; }
+.badge.active, .badge.online, .badge.paid, .badge.completed,
+.badge.resolved { color: #75e4b9; background: rgb(39 196 139 / 13%); }
+.badge.pending, .badge.sent, .badge.open, .badge.unknown { color: #ffd08a; background: rgb(245 165 74 / 13%); }
+.badge.overdue, .badge.suspended, .badge.offline, .badge.failed { color: #ff9b98; background: rgb(229 57 53 / 13%); }
+th { color: #9eacc3; background: #172236; }
+td { border-color: var(--dz-border); }
+tbody tr:hover { background: rgb(39 181 245 / 7%); }
+.empty, .error-state, .muted, .muted-small, .stat-label, .stat-meta { color: var(--dz-muted); }
+.notice { color: var(--dz-muted); background: rgb(39 181 245 / 9%); }
+.notice.error, .result-box.error { color: #ffc1be; background: rgb(229 57 53 / 12%); border-color: rgb(229 57 53 / 30%); }
+.result-box.success { color: #b0f3d8; background: rgb(39 196 139 / 11%); border-color: rgb(39 196 139 / 30%); }
+.modal-backdrop, .drawer-backdrop { background: rgb(3 8 18 / 72%); }
+.skeleton { background: linear-gradient(100deg, #202c40 20%, #2c3a52 48%, #202c40 76%); background-size: 220% 100%; }
+.toast { box-shadow: var(--dz-shadow); }
+
+/* Captive portal retains its existing DOM and trusted attestation scripts. */
+.page-shell {
+  --bg: var(--dz-bg); --panel: var(--dz-surface); --panel-alt: var(--dz-surface-raised);
+  --ink: var(--dz-text); --muted: var(--dz-muted); --line: var(--dz-border);
+  --accent: var(--dz-cyan); --accent-dark: #1599db; --accent-soft: rgb(39 181 245 / 14%);
+  --amber: var(--dz-amber); --success: var(--dz-green); --danger: var(--dz-red);
+  color: var(--dz-text);
+  background: radial-gradient(ellipse at 50% -18%, rgb(39 181 245 / 12%), transparent 48%), var(--dz-bg);
+}
+.page-shell .topbar, .page-shell .hero-card, .page-shell .step,
+.page-shell .promo-card, .page-shell .plan-card, .page-shell .panel,
+.page-shell .info-box, .page-shell .resource-card, .page-shell .voucher-card {
+  color: var(--dz-text); background: var(--dz-surface); border-color: var(--dz-border);
+}
+.page-shell .hero-card { background: linear-gradient(128deg, #1e2d44, #19263a 65%, #1b3042); box-shadow: var(--dz-shadow); }
+.page-shell .hero-copy h1, .page-shell .section-head h2, .page-shell h2,
+.page-shell h3, .page-shell .brand-name { color: var(--dz-text); }
+.page-shell .hero-copy p, .page-shell .step span, .page-shell .promo-card span { color: var(--dz-muted); }
+.page-shell .topbar { background: rgb(20 30 49 / 94%); }
+.page-shell .cta-mini, .page-shell .resource-action { color: var(--dz-cyan); background: rgb(39 181 245 / 9%); border-color: rgb(39 181 245 / 28%); }
+.page-shell .step-no { color: #071722; background: var(--dz-cyan); }
+.page-shell .eyebrow, .page-shell .tag { color: var(--dz-cyan); background: rgb(39 181 245 / 12%); border-color: rgb(39 181 245 / 24%); }
+.page-shell .plan-card:hover, .page-shell .info-box:hover { border-color: var(--dz-cyan); }
+.page-shell input, .page-shell select, .page-shell textarea { color: var(--dz-text); background: #151f32; border-color: var(--dz-border); }
+.page-shell input::placeholder { color: #8492aa; }
+.page-shell .footer-note, .page-shell .device-status, .page-shell .voucher-result { color: var(--dz-muted); }
+.page-shell .button-primary, .page-shell .btn-primary, .page-shell .primary-button,
+.page-shell button[type="submit"] { color: #04131d; background: var(--primary-grad); }
+
+@media (max-width: 767px) {
+  .sidebar { box-shadow: 18px 0 42px rgb(0 0 0 / 32%); }
+  .table-wrap, .table-responsive { border-color: var(--dz-border); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
