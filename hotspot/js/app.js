@@ -90,7 +90,7 @@ function getDefaultApiBase() {
       const status = document.getElementById('device-identification-status');
       if (!CLIENT_IP || !CLIENT_MAC) {
         saveHotspotContext('');
-        status.textContent = 'Device verification is unavailable because the hotspot did not provide both device identifiers. Reconnect to the DevZen Wi-Fi sign-in page and try again. Global packages may still be shown.';
+        status.textContent = 'Secure device verification is unavailable because MikroTik did not provide both device identifiers. Reconnect to the DevZen Wi-Fi sign-in page. Packages may be visible, but purchases require successful verification.';
         status.dataset.state = 'failed';
         return '';
       }
@@ -100,17 +100,17 @@ function getDefaultApiBase() {
         const result = await api('/api/v1/hotspot/devices/attest', {
           method: 'POST',
           body: { ip_address: CLIENT_IP, mac_address: CLIENT_MAC },
+          timeoutMs: 30000,
+          timeoutMessage: 'Secure device verification timed out while checking the router. Please reconnect to WiFi and retry.',
         });
-        const token = result?.data?.context_token || '';
+        const token = PortalApiRequest.getTrustedContextToken(result);
         saveHotspotContext(token);
-        status.textContent = token
-          ? 'Device verified. Packages available for this Wi-Fi site are being loaded.'
-          : 'The billing service did not return a trusted device context. Only global packages can be shown.';
-        status.dataset.state = token ? 'verified' : 'failed';
+        status.textContent = 'Device verified. Packages available for this Wi-Fi site are being loaded.';
+        status.dataset.state = 'verified';
         return token;
       } catch (error) {
         saveHotspotContext('');
-        status.textContent = `Device verification could not be completed: ${error.message}. The portal will show only packages the backend allows without a trusted site context.`;
+        status.textContent = `Device verification could not be completed: ${error.message}. Purchases remain unavailable until secure verification succeeds.`;
         status.dataset.state = 'failed';
         return '';
       }
@@ -393,9 +393,9 @@ function getDefaultApiBase() {
         }
         verifiedDevice = device;
         verifiedMac = normalizeMac(device.mac_address);
-        deviceStatus.textContent = `Device verified on ${device.router_name || 'the hotspot'}${device.site_id ? ` · site ${device.site_id}` : ''}.`;
+        deviceStatus.textContent = `DHCP record matched on ${device.router_name || 'a configured router'}. Trusted router attestation is still required before purchase.`;
         deviceStatus.dataset.verified = 'true';
-        deviceStatus.dataset.state = 'verified';
+        deviceStatus.dataset.state = 'hint-matched';
       };
       const verifyByLookup = async (payload) => {
         const sequence = ++deviceLookupSequence;
@@ -457,7 +457,13 @@ function getDefaultApiBase() {
         errBox.style.display = 'none';
 
         if (!verifiedMac || deviceStatus.dataset.verified !== 'true') {
-          errBox.textContent = 'Verify the device before payment.';
+          errBox.textContent = 'The router DHCP record has not matched this device yet.';
+          errBox.style.display = 'block';
+          return;
+        }
+
+        if (!readHotspotContext()) {
+          errBox.textContent = 'Secure router verification is required before payment. Reconnect to the WiFi sign-in page and retry device verification.';
           errBox.style.display = 'block';
           return;
         }

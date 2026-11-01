@@ -1,6 +1,26 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createApiRequest } = require('../hotspot/js/api-request.js');
+const { createApiRequest, getTrustedContextToken } = require('../hotspot/js/api-request.js');
+
+test('accepts only a verified, unexpired opaque trusted context', () => {
+  const token = 'A'.repeat(43);
+  assert.equal(getTrustedContextToken({
+    success: true,
+    data: { verified: true, context_token: token, expires_at: 200 },
+  }, 100), token);
+});
+
+for (const response of [
+  { success: false, data: { verified: true, context_token: 'A'.repeat(43), expires_at: 200 } },
+  { success: true, data: { verified: false, context_token: 'A'.repeat(43), expires_at: 200 } },
+  { success: true, data: { verified: true, context_token: 'short', expires_at: 200 } },
+  { success: true, data: { verified: true, context_token: 'A'.repeat(43), expires_at: 100 } },
+  { success: true, data: { verified: true, context_token: 'A'.repeat(43), expires_at: '200' } },
+]) {
+  test('rejects incomplete, unverified, malformed, or expired trusted context', () => {
+    assert.throws(() => getTrustedContextToken(response, 100), /incomplete or expired/);
+  });
+}
 
 test('reports a slow router lookup as a timeout rather than API connection loss', async () => {
   const api = createApiRequest(

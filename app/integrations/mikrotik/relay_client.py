@@ -20,6 +20,10 @@ logger = get_logger(__name__)
 class RouterRelayError(Exception):
     """Raised for relayed API failures or invalid relay responses."""
 
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class RouterRelayClient:
     """Client for the VPS relay that sits between Render and the MikroTik router."""
@@ -121,9 +125,9 @@ class RouterRelayClient:
     async def attest_hotspot_client(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Request a signed, read-only HotSpot observation from the relay.
 
-        The endpoint is a Phase 4 server contract and is not implemented by
-        the external relay in this repository. Callers must validate the
-        signed response before trusting any value in it.
+        The endpoint is implemented in the local Phase J relay source copy;
+        production support still depends on deploying a compatible relay.
+        Callers must validate the signed response before trusting any value.
         """
         return await self._request("POST", "/api/v1/router/attest", request)
 
@@ -145,9 +149,9 @@ class RouterRelayClient:
             async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers()) as client:
                 response = await client.request(method, f"{self.base_url}{path}", json=json_body)
                 if response.status_code == 401:
-                    raise RouterRelayError("Relay authentication failed")
+                    raise RouterRelayError("Relay authentication failed", status_code=401)
                 if response.status_code >= 400:
-                    raise RouterRelayError(f"Relay returned HTTP {response.status_code}")
+                    raise RouterRelayError(f"Relay returned HTTP {response.status_code}", status_code=response.status_code)
                 body = response.json()
         except httpx.HTTPError as exc:
             raise RouterRelayError(f"Relay connection failed: {exc}") from exc

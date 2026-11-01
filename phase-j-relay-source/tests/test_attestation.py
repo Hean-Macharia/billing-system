@@ -164,7 +164,7 @@ def test_rejects_extra_router_target_fields(monkeypatch):
 
 
 def test_unavailable_router_configuration_fails_closed(monkeypatch):
-    monkeypatch.setattr(server, "load_attestation_router", lambda: (_ for _ in ()).throw(RuntimeError("mapping missing")))
+    monkeypatch.setattr(server, "load_attestation_router", lambda *_args: (_ for _ in ()).throw(RuntimeError("mapping missing")))
     with pytest.raises(RuntimeError, match="mapping"):
         server.handle_attestation(dict(REQUEST), TOKEN, observer=lambda *_: None)
 
@@ -177,7 +177,11 @@ def test_router_allowlist_requires_explicit_enabled_router_and_active_site(monke
         "ATTESTATION_SITE_ACTIVE": "true",
     }
     monkeypatch.setattr(server, "_relay_env_value", lambda key: settings.get(key, ""))
-    assert server.load_attestation_router() == ROUTER
+    result = server.load_attestation_router()
+    assert result["router_id"] == ROUTER["router_id"]
+    assert result["site_id"] == ROUTER["site_id"]
+    assert result["host"] == routeros.HOST
+    assert result["credential_env"] == "MIKROTIK_API_PASSWORD"
     settings["ATTESTATION_ROUTER_ENABLED"] = "false"
     with pytest.raises(RuntimeError, match="disabled or inactive"):
         server.load_attestation_router()
@@ -185,6 +189,86 @@ def test_router_allowlist_requires_explicit_enabled_router_and_active_site(monke
     settings["ATTESTATION_SITE_ACTIVE"] = "false"
     with pytest.raises(RuntimeError, match="disabled or inactive"):
         server.load_attestation_router()
+
+
+def _router_registry():
+    return [
+        {
+            "router_id": ROUTER["router_id"], "site_id": ROUTER["site_id"],
+            "host": "192.168.88.1", "port": 8728, "username": "relay-user",
+            "enabled": True, "site_active": True,
+        },
+        {
+            "router_id": "65ab00000000000000000003", "site_id": "65ab00000000000000000004",
+            "host": "10.30.1.1", "port": 8728, "username": "relay-user-2",
+            "enabled": True, "site_active": True,
+        },
+    ]
+
+
+def test_multisite_allowlist_selects_exact_router_and_site(monkeypatch):
+    registry_json = json.dumps(_router_registry())
+    monkeypatch.setattr(server, "_relay_env_value", lambda name: registry_json if name == "ATTESTATION_ROUTERS_JSON" else "")
+
+    routers = server.load_attestation_routers()
+    selected = server.load_attestation_router("65AB00000000000000000003", "65AB00000000000000000004")
+
+    assert len(routers) == 2
+    assert selected["router_id"] == "65ab00000000000000000003"
+    assert selected["site_id"] == "65ab00000000000000000004"
+    assert selected["host"] == "10.30.1.1"
+    assert selected["credential_env"] == "MIKROTIK_API_PASSWORD_65AB00000000000000000003"
+    assert all("password" not in entry for entry in routers)
+
+    with pytest.raises(PermissionError, match="not configured"):
+        server.load_attestation_router(ROUTER["router_id"], "65ab00000000000000000004")
+
+
+def test_multisite_allowlist_rejects_duplicate_ids_and_untrusted_targets(monkeypatch):
+    registry = _router_registry()
+    registry[1]["router_id"] = registry[0]["router_id"]
+    monkeypatch.setattr(server, "_relay_env_value", lambda name: json.dumps(registry) if name == "ATTESTATION_ROUTERS_JSON" else "")
+    with pytest.raises(RuntimeError, match="duplicate identities"):
+        server.load_attestation_routers()
+
+    registry = _router_registry()
+    registry[1]["host"] = "127.0.0.1"
+    monkeypatch.setattr(server, "_relay_env_value", lambda name: json.dumps(registry) if name == "ATTESTATION_ROUTERS_JSON" else "")
+    with pytest.raises(RuntimeError, match="approved private address"):
+        server.load_attestation_routers()
+
+
+def test_attestation_routes_to_requested_allowlisted_router_not_first_entry(monkeypatch):
+    now = REQUEST["requested_at"]
+    registry_json = json.dumps(_router_registry())
+    monkeypatch.setattr(server.time, "time", lambda: now)
+    monkeypatch.setattr(server, "_relay_env_value", lambda name: registry_json if name == "ATTESTATION_ROUTERS_JSON" else "")
+    monkeypatch.setattr(server, "load_router_password_for", lambda _router: "mock-only")
+    captured = {}
+
+    def observe(client_ip, client_mac, password, router=None):
+        captured["router"] = router
+        captured["password"] = password
+        return {
+            "client_ip": client_ip, "observed": False,
+            "evidence": {
+                "dhcp_lease_match": False, "dhcp_lease_status": "missing",
+                "hotspot_host_match": False, "observation_age_seconds": 0,
+            },
+        }
+
+    monkeypatch.setattr(routeros, "observe_hotspot_client", observe)
+    request = {
+        **REQUEST,
+        "router_id": "65ab00000000000000000003",
+        "site_id": "65ab00000000000000000004",
+    }
+    result = server.handle_attestation(request, TOKEN)
+
+    assert captured["router"]["host"] == "10.30.1.1"
+    assert captured["router"]["router_id"] == request["router_id"]
+    assert captured["password"] == "mock-only"
+    assert result["attestation"]["site_id"] == request["site_id"]
 
 
 def test_hmac_tampering_is_detected_by_fastapi():
@@ -230,6 +314,33 @@ def test_routeros_observation_reads_only_dhcp_and_hotspot_tables(monkeypatch):
     assert observed["evidence"]["dhcp_lease_status"] == "bound"
     assert observed["evidence"]["hotspot_host_match"] is True
     assert commands == ["/ip/dhcp-server/lease/print", "/ip/hotspot/host/print"]
+
+
+def test_routeros_observation_uses_only_the_selected_allowlisted_target(monkeypatch):
+    connected_to = {}
+
+    class FakeRouterOS:
+        def __init__(self, password, timeout, host, port, username):
+            assert password == "mock-only"
+            connected_to.update(host=host, port=port, username=username)
+
+        def connect(self):
+            return None
+
+        def query(self, _command, attributes=None):
+            return []
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(routeros, "RouterOS", FakeRouterOS)
+    result = routeros.observe_hotspot_client(
+        REQUEST["client_ip"], REQUEST["client_mac"], "mock-only",
+        router={"host": "10.30.1.1", "port": 8728, "username": "router-two"},
+    )
+
+    assert connected_to == {"host": "10.30.1.1", "port": 8728, "username": "router-two"}
+    assert result["observed"] is False
 
 
 @pytest.mark.parametrize("kind", ["unbound", "expired", "missing-host", "mismatched-host", "duplicate-lease", "duplicate-host"])
@@ -301,7 +412,7 @@ def test_attestation_route_rejects_missing_or_invalid_bearer(relay_http, authori
 
 
 def test_attestation_route_uses_existing_auth_and_returns_safe_mapping_error(relay_http, monkeypatch):
-    monkeypatch.setattr(server, "load_attestation_router", lambda: (_ for _ in ()).throw(RuntimeError("Attestation router/site mapping is not configured")))
+    monkeypatch.setattr(server, "load_attestation_router", lambda *_args: (_ for _ in ()).throw(RuntimeError("Attestation router/site mapping is not configured")))
     status, body = _post(relay_http, "/api/v1/router/attest", "Bearer " + TOKEN, REQUEST)
     assert status == 503
     assert body["message"] == "Router attestation could not be verified"

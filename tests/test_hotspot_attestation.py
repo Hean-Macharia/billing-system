@@ -79,6 +79,17 @@ class FakeRelay:
         return {"attestation": payload, "signature": sign_attestation(payload, TOKEN)}
 
 
+class RelayAllowlistMismatch(FakeRelay):
+    def __init__(self, observed_router_ids=(), *, rejected=()):
+        super().__init__(observed_router_ids)
+        self.rejected = set(rejected)
+
+    async def attest_hotspot_client(self, request):
+        if request["router_id"] in self.rejected:
+            raise RouterRelayError("Relay returned HTTP 403", status_code=403)
+        return await super().attest_hotspot_client(request)
+
+
 def make_service(db, relay, monkeypatch):
     monkeypatch.setattr(settings, "router_connection_mode", "vps_relay")
     monkeypatch.setattr(settings, "router_relay_token", TOKEN)
@@ -179,27 +190,55 @@ async def test_site_lookup_accepts_string_objectid_storage_variants(attestation_
 
 
 @pytest.mark.asyncio
-async def test_inactive_site_is_rejected(attestation_db, monkeypatch):
-    _, _ = await seed_router(attestation_db, "Disabled site router", "Nyaururu", site_status="inactive")
+async def test_inactive_site_candidate_is_excluded_when_valid_router_exists(attestation_db, monkeypatch, caplog):
+    valid_id, _ = await seed_router(attestation_db, "Nyaururu RB951", "Nyaururu")
+    await seed_router(attestation_db, "Disabled site router", "Nakuru", site_status="inactive")
     service = make_service(attestation_db, FakeRelay(), monkeypatch)
 
-    with pytest.raises(ServiceUnavailableError, match="not attached to an active site"):
-        await service._candidate_routers()
+    candidates = await service._candidate_routers()
+
+    assert [candidate["router_id"] for candidate in candidates] == [valid_id]
+    assert any(
+        getattr(record, "event", None) == "hotspot_router_candidate_excluded"
+        and getattr(record, "reason", None) == "site_inactive"
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio
-async def test_missing_site_is_rejected(attestation_db, monkeypatch):
+async def test_missing_site_candidate_is_excluded_when_valid_router_exists(attestation_db, monkeypatch, caplog):
+    valid_id, _ = await seed_router(attestation_db, "Nyaururu RB951", "Nyaururu")
     await attestation_db.routers.insert_one({
         "_id": ObjectId(), "name": "Orphan router", "site_id": str(ObjectId()), "status": "online",
     })
     service = make_service(attestation_db, FakeRelay(), monkeypatch)
 
-    with pytest.raises(ServiceUnavailableError, match="not attached to an active site"):
-        await service._candidate_routers()
+    candidates = await service._candidate_routers()
+
+    assert [candidate["router_id"] for candidate in candidates] == [valid_id]
+    assert any(getattr(record, "reason", None) == "missing_site_record" for record in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_conflicting_router_and_nas_site_ids_are_rejected(attestation_db, monkeypatch):
+async def test_invalid_online_router_does_not_prevent_valid_router_attestation(attestation_db, monkeypatch):
+    valid_id, valid_site = await seed_router(attestation_db, "Nyaururu RB951", "Nyaururu")
+    await attestation_db.routers.insert_one({
+        "_id": ObjectId(), "name": "Misconfigured online router",
+        "site_id": str(ObjectId()), "status": "online",
+    })
+    await create_nonce_index(attestation_db)
+    service = make_service(attestation_db, FakeRelay({valid_id}), monkeypatch)
+
+    context = await service.create_context(CLIENT_IP, CLIENT_MAC)
+
+    stored_context = await service.get_context(context["context_token"])
+    assert stored_context.router_id == valid_id
+    assert stored_context.site_id == valid_site
+
+
+@pytest.mark.asyncio
+async def test_conflicting_router_and_nas_candidate_is_excluded_when_valid_router_exists(attestation_db, monkeypatch, caplog):
+    valid_id, _ = await seed_router(attestation_db, "Nyaururu RB951", "Nyaururu")
     router_site = ObjectId()
     nas_site = ObjectId()
     router_id = ObjectId()
@@ -220,7 +259,36 @@ async def test_conflicting_router_and_nas_site_ids_are_rejected(attestation_db, 
     })
     service = make_service(attestation_db, FakeRelay(), monkeypatch)
 
-    with pytest.raises(ServiceUnavailableError, match="conflicting site mappings"):
+    candidates = await service._candidate_routers()
+
+    assert [candidate["router_id"] for candidate in candidates] == [valid_id]
+    assert any(
+        getattr(record, "reason", None) == "conflicting_router_nas_site_mapping"
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_valid_site_candidates_fail_closed(attestation_db, monkeypatch):
+    await seed_router(attestation_db, "Orphan router", "Nyaururu", site_status="inactive")
+    service = make_service(attestation_db, FakeRelay(), monkeypatch)
+
+    with pytest.raises(ServiceUnavailableError, match="No eligible routers with valid active-site mappings"):
+        await service._candidate_routers()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_router_ids_fail_closed(attestation_db, monkeypatch):
+    router_id, site_id = await seed_router(attestation_db, "First copy", "Nyaururu")
+    original = await attestation_db.routers.find_one({"_id": ObjectId(router_id)})
+
+    async def duplicate_rows(_collection, _query, limit=65):
+        return [original, {**original, "name": "Duplicate copy", "site_id": site_id}]
+
+    monkeypatch.setattr("app.services.hotspot_attestation_service._rows", duplicate_rows)
+    service = make_service(attestation_db, FakeRelay(), monkeypatch)
+
+    with pytest.raises(ServiceUnavailableError, match="Duplicate router identities"):
         await service._candidate_routers()
 
 
@@ -235,6 +303,31 @@ async def test_matching_router_is_selected_among_multiple_online_routers(attesta
     context = await service.get_context(result["context_token"])
 
     assert context.router_id == nyarururu_id
+
+
+@pytest.mark.asyncio
+async def test_relay_rejected_unrelated_candidate_does_not_block_valid_signed_match(attestation_db, monkeypatch):
+    matched_id, matched_site = await seed_router(attestation_db, "Nyaururu RB951", "Nyaururu")
+    rejected_id, _ = await seed_router(attestation_db, "Not-yet-allowlisted Nakuru router", "Nakuru")
+    await create_nonce_index(attestation_db)
+    relay = RelayAllowlistMismatch({matched_id}, rejected={rejected_id})
+
+    context = await make_service(attestation_db, relay, monkeypatch).create_context(CLIENT_IP, CLIENT_MAC)
+
+    assert context["verified"] is True
+    stored = await attestation_db.hotspot_trusted_contexts.find_one({})
+    assert stored["router_id"] == matched_id
+    assert stored["site_id"] == matched_site
+
+
+@pytest.mark.asyncio
+async def test_relay_allowlist_mismatch_without_signed_match_fails_closed(attestation_db, monkeypatch):
+    rejected_id, _ = await seed_router(attestation_db, "Unconfigured router", "Nakuru")
+    await create_nonce_index(attestation_db)
+    relay = RelayAllowlistMismatch(rejected={rejected_id})
+
+    with pytest.raises(ServiceUnavailableError, match="does not authorize every configured router/site"):
+        await make_service(attestation_db, relay, monkeypatch).create_context(CLIENT_IP, CLIENT_MAC)
 
 
 @pytest.mark.asyncio
@@ -390,10 +483,60 @@ async def test_expired_context_and_router_site_change_do_not_expose_site(attesta
 
 
 @pytest.mark.asyncio
+async def test_purchase_time_rejects_expired_context_before_relay(attestation_db, monkeypatch):
+    router_id, _ = await seed_router(attestation_db, "Nakuru edge", "Nakuru")
+    await create_nonce_index(attestation_db)
+    relay = FakeRelay({router_id})
+    service = make_service(attestation_db, relay, monkeypatch)
+    context = await service.create_context(CLIENT_IP, CLIENT_MAC)
+    initial_calls = len(relay.requests)
+    await attestation_db.hotspot_trusted_contexts.update_one(
+        {}, {"$set": {"expires_at": datetime.fromtimestamp(NOW - 1, timezone.utc)}}
+    )
+
+    with pytest.raises(ConflictError, match="missing or expired"):
+        await service.attest_purchase_device(
+            context["context_token"], "this_device", CLIENT_IP, CLIENT_MAC
+        )
+
+    assert len(relay.requests) == initial_calls
+
+
+@pytest.mark.asyncio
+async def test_context_revalidation_rejects_router_that_is_no_longer_online(attestation_db, monkeypatch):
+    router_id, _ = await seed_router(attestation_db, "Nyaururu edge", "Nyaururu")
+    await create_nonce_index(attestation_db)
+    service = make_service(attestation_db, FakeRelay({router_id}), monkeypatch)
+    context = await service.create_context(CLIENT_IP, CLIENT_MAC)
+    await attestation_db.routers.update_one({"_id": ObjectId(router_id)}, {"$set": {"status": "offline"}})
+
+    assert await service.get_context(context["context_token"]) is None
+
+
+@pytest.mark.asyncio
+async def test_context_revalidation_rejects_conflicting_attached_nas_site(attestation_db, monkeypatch):
+    router_id, _ = await seed_router(attestation_db, "Nyaururu edge", "Nyaururu")
+    await create_nonce_index(attestation_db)
+    service = make_service(attestation_db, FakeRelay({router_id}), monkeypatch)
+    context = await service.create_context(CLIENT_IP, CLIENT_MAC)
+    other_site = ObjectId()
+    nas_id = ObjectId()
+    await attestation_db.sites.insert_one({"_id": other_site, "name": "Nakuru", "status": "active"})
+    await attestation_db.nas_clients.insert_one({
+        "_id": nas_id, "site_id": str(other_site), "status": "active",
+    })
+    await attestation_db.routers.update_one(
+        {"_id": ObjectId(router_id)}, {"$set": {"nas_client_id": str(nas_id)}}
+    )
+
+    assert await service.get_context(context["context_token"]) is None
+
+
+@pytest.mark.asyncio
 async def test_inactive_or_unmapped_site_router_is_not_queried(attestation_db, monkeypatch):
     await seed_router(attestation_db, "Planned edge", "Planned", site_status="inactive")
     relay = FakeRelay()
-    with pytest.raises(ServiceUnavailableError, match="active site"):
+    with pytest.raises(ServiceUnavailableError, match="No eligible routers with valid active-site mappings"):
         await make_service(attestation_db, relay, monkeypatch).create_context(CLIENT_IP, CLIENT_MAC)
     assert relay.requests == []
 

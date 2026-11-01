@@ -101,14 +101,85 @@ def load_router_password():
     return password
 
 
-def load_attestation_router():
-    """Return the single explicitly configured router identity.
+def load_router_password_for(router):
+    """Read the router credential named by a trusted allowlist entry."""
+    credential_env = router.get("credential_env") if isinstance(router, dict) else None
+    if credential_env == "MIKROTIK_API_PASSWORD":
+        return load_router_password()
+    if not isinstance(credential_env, str) or not re.fullmatch(r"MIKROTIK_API_PASSWORD_[0-9A-F]{24}", credential_env):
+        raise RuntimeError("Router credentials are not configured")
+    password = _relay_env_value(credential_env)
+    if not password:
+        raise RuntimeError("Router credentials are not configured")
+    return password
 
-    The RouterOS host/user/port remain the existing fixed values in routeros.py.
-    Router/site IDs must be supplied from the verified billing inventory in
-    relay.env before this endpoint can be enabled. No request field can set
-    the management target.
+
+def _validate_allowlist_router(entry):
+    """Validate one non-secret router/site entry from trusted relay config."""
+    required = {"router_id", "site_id", "host", "port", "username", "enabled", "site_active"}
+    if not isinstance(entry, dict) or set(entry) != required:
+        raise RuntimeError("Attestation router allowlist entry is invalid")
+
+    router_id = entry.get("router_id")
+    site_id = entry.get("site_id")
+    if not isinstance(router_id, str) or not re.fullmatch(r"[0-9a-fA-F]{24}", router_id):
+        raise RuntimeError("Attestation router allowlist identity is invalid")
+    if not isinstance(site_id, str) or not re.fullmatch(r"[0-9a-fA-F]{24}", site_id):
+        raise RuntimeError("Attestation router allowlist site is invalid")
+    if entry.get("enabled") is not True or entry.get("site_active") is not True:
+        raise RuntimeError("Attestation router/site mapping is disabled or inactive")
+
+    host = entry.get("host")
+    if not isinstance(host, str) or len(host) > 64:
+        raise RuntimeError("Attestation router management target is invalid")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise RuntimeError("Attestation router management target must be a configured IP address") from exc
+    if not address.is_private or address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified:
+        raise RuntimeError("Attestation router management target is not an approved private address")
+
+    port = entry.get("port")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise RuntimeError("Attestation router management port is invalid")
+    username = entry.get("username")
+    if not isinstance(username, str) or not username or len(username) > 64:
+        raise RuntimeError("Attestation router API username is invalid")
+
+    normalized_router_id = router_id.lower()
+    return {
+        "router_id": normalized_router_id,
+        "site_id": site_id.lower(),
+        "host": str(address),
+        "port": port,
+        "username": username,
+        "enabled": True,
+        "site_active": True,
+        "credential_env": "MIKROTIK_API_PASSWORD_" + normalized_router_id.upper(),
+    }
+
+
+def load_attestation_routers():
+    """Load an explicit multi-router allowlist, with legacy single-router support.
+
+    ATTESTATION_ROUTERS_JSON contains only router/site IDs and management
+    targets. Credentials remain separate in relay.env under a router-specific
+    variable name. The request body can never supply or override a target.
     """
+    raw_registry = _relay_env_value("ATTESTATION_ROUTERS_JSON")
+    if raw_registry:
+        try:
+            entries = json.loads(raw_registry)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Attestation router allowlist is malformed") from exc
+        if not isinstance(entries, list) or not entries or len(entries) > 64:
+            raise RuntimeError("Attestation router allowlist is empty or too large")
+        routers = [_validate_allowlist_router(entry) for entry in entries]
+        ids = [router["router_id"] for router in routers]
+        if len(ids) != len(set(ids)):
+            raise RuntimeError("Attestation router allowlist contains duplicate identities")
+        return routers
+
     router_id = _relay_env_value("ATTESTATION_ROUTER_ID")
     site_id = _relay_env_value("ATTESTATION_SITE_ID")
     router_enabled = _relay_env_value("ATTESTATION_ROUTER_ENABLED").lower()
@@ -119,7 +190,33 @@ def load_attestation_router():
         raise RuntimeError("Attestation router/site mapping is disabled or inactive")
     if not re.fullmatch(r"[0-9a-fA-F]{24}", router_id) or not re.fullmatch(r"[0-9a-fA-F]{24}", site_id):
         raise RuntimeError("Attestation router/site mapping is invalid")
-    return {"router_id": router_id.lower(), "site_id": site_id.lower()}
+    import routeros
+    return [{
+        "router_id": router_id.lower(),
+        "site_id": site_id.lower(),
+        "host": routeros.HOST,
+        "port": routeros.PORT,
+        "username": routeros.USERNAME,
+        "enabled": True,
+        "site_active": True,
+        "credential_env": "MIKROTIK_API_PASSWORD",
+    }]
+
+
+def load_attestation_router(router_id=None, site_id=None):
+    """Resolve exactly one configured router/site pair; never select by order."""
+    routers = load_attestation_routers()
+    if router_id is None and site_id is None and len(routers) == 1:
+        return routers[0]
+    if not isinstance(router_id, str) or not isinstance(site_id, str):
+        raise RuntimeError("Router and site identity are required for multi-router attestation")
+    matches = [
+        router for router in routers
+        if router["router_id"] == router_id.lower() and router["site_id"] == site_id.lower()
+    ]
+    if len(matches) != 1:
+        raise PermissionError("Requested router/site is not configured")
+    return matches[0]
 
 
 def _validate_attestation_request(request, router):
@@ -237,15 +334,29 @@ def create_attestation(request, router, observation, relay_token, now=None):
 
 
 def handle_attestation(request, relay_token, router=None, observer=None, now=None):
-    """Validate, query the single configured RouterOS target, then sign."""
-    configured_router = router or load_attestation_router()
+    """Validate, query exactly the configured RouterOS target, then sign."""
+    configured_router = router or load_attestation_router(
+        request.get("router_id"), request.get("site_id")
+    )
     normalized = _validate_attestation_request(request, configured_router)
     if observer is None:
         import routeros
-        observer = routeros.observe_hotspot_client
-    observation = observer(
-        normalized["client_ip"], normalized["client_mac"], load_router_password()
-    )
+        password = (
+            load_router_password()
+            if configured_router.get("credential_env") == "MIKROTIK_API_PASSWORD"
+            else load_router_password_for(configured_router)
+        )
+        observation = routeros.observe_hotspot_client(
+            normalized["client_ip"],
+            normalized["client_mac"],
+            password,
+            router=configured_router,
+        )
+    else:
+        # Injectable observer keeps isolated tests independent of RouterOS.
+        observation = observer(
+            normalized["client_ip"], normalized["client_mac"], "mock-only"
+        )
     if now is not None:
         return create_attestation(normalized, configured_router, observation, relay_token, now=now)
     return create_attestation(normalized, configured_router, observation, relay_token)

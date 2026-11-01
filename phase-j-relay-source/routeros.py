@@ -66,22 +66,25 @@ def read_length(sock):
 
 
 class RouterOS:
-    def __init__(self, password, timeout=TIMEOUT):
+    def __init__(self, password, timeout=TIMEOUT, host=HOST, port=PORT, username=USERNAME):
         self.password = password
         self.timeout = timeout
+        self.host = host
+        self.port = port
+        self.username = username
         self.sock = None
         self.lock = threading.Lock()
 
     def connect(self):
         self.sock = socket.create_connection(
-            (HOST, PORT), timeout=self.timeout
+            (self.host, self.port), timeout=self.timeout
         )
         self.sock.settimeout(self.timeout)
 
         # RouterOS 6.49 supports legacy API login.
         reply = self._command([
             "/login",
-            "=name=" + USERNAME,
+            "=name=" + self.username,
             "=password=" + self.password,
         ])
 
@@ -253,17 +256,25 @@ def _normalize_ip(value):
     return str(address)
 
 
-def observe_hotspot_client(client_ip, client_mac, password):
-    """Read the DHCP lease and HotSpot host tables from this configured router.
+def observe_hotspot_client(client_ip, client_mac, password, router=None):
+    """Read DHCP and HotSpot observations from one allowlisted router.
 
-    This operation is deliberately bound to the module's fixed, existing
-    RouterOS management target. Callers cannot provide a host or command.
+    Without a router descriptor this preserves the legacy fixed management
+    target. Attestation supplies a descriptor loaded from the relay-side
+    allowlist; caller-provided host or command values are never accepted.
     The returned observation contains no router credentials or unrelated
     RouterOS fields.
     """
     normalized_mac = _normalize_mac(client_mac)
     normalized_ip = _normalize_ip(client_ip) if client_ip else None
-    api = RouterOS(password, timeout=3)
+    api_options = {}
+    if router is not None:
+        api_options = {
+            "host": router["host"],
+            "port": router["port"],
+            "username": router["username"],
+        }
+    api = RouterOS(password, timeout=3, **api_options)
     started = time.monotonic()
     try:
         api.connect()
@@ -330,10 +341,10 @@ def observe_hotspot_client(client_ip, client_mac, password):
                 "dhcp_lease_match": bool(lease_current),
                 "dhcp_lease_status": lease_status,
                 "hotspot_host_match": bool(host_current),
-                # The values are read directly from live, non-cached RouterOS
-                # tables. The signed timestamp is generated immediately after
-                # both replies, so its snapshot age at issuance is zero.
-                "observation_age_seconds": 0,
+                # Report conservative elapsed time from connection start to
+                # completion of both uncached reads. This bounds the age of
+                # the earlier DHCP snapshot at signature creation.
+                "observation_age_seconds": round(time.monotonic() - started, 3),
             },
             "query_elapsed_seconds": round(time.monotonic() - started, 3),
         }

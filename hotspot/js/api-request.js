@@ -61,5 +61,20 @@
     };
   }
 
-  return { createApiRequest };
+  function getTrustedContextToken(response, nowSeconds = Math.floor(Date.now() / 1000)) {
+    const data = response?.data;
+    if (
+      response?.success !== true
+      || data?.verified !== true
+      || typeof data.context_token !== 'string'
+      || !/^[A-Za-z0-9_-]{32,128}$/.test(data.context_token)
+      || !Number.isInteger(data.expires_at)
+      || data.expires_at <= nowSeconds
+    ) {
+      throw new Error('The billing API returned an incomplete or expired trusted-device response.');
+    }
+    return data.context_token;
+  }
+
+  return { createApiRequest, getTrustedContextToken };
 });

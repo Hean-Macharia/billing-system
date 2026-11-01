@@ -22,6 +22,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
+from app.core.logging import get_logger
 from app.integrations.mikrotik.relay_client import RouterRelayClient, RouterRelayError
 
 ATTESTATION_ISSUER = "devzen-vps-relay"
@@ -31,6 +32,7 @@ ATTESTATION_MAX_AGE_SECONDS = 30
 CONTEXT_LIFETIME_SECONDS = 300
 MAX_ROUTER_CANDIDATES = 64
 _SIGNING_DOMAIN = b"devzen/relay-attestation/v1"
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -149,43 +151,69 @@ class HotspotAttestationService:
         self.clock = clock
 
     async def _candidate_routers(self) -> list[dict]:
-        routers = await _rows(self.db.routers, {"status": {"$ne": "disabled"}})
+        routers = await _rows(self.db.routers, {"status": "online"})
         if len(routers) > MAX_ROUTER_CANDIDATES:
             raise ServiceUnavailableError("Router context verification is unavailable for this router inventory")
-        # Offline devices cannot currently observe a captive client. Excluding
-        # them avoids making an unrelated failed router a prerequisite for an
-        # online site while still validating every eligible router below.
-        routers = [
-            router for router in routers
-            if _status_text(router.get("status")) not in {"disabled", "offline"}
-        ]
-        if not routers:
-            raise ServiceUnavailableError("No configured MikroTik routers are available for verification")
-
         candidates = []
+        router_ids = set()
         for router in routers:
-            router_id = str(router.get("_id") or "")
-            if not _oid(router_id):
-                raise ServiceUnavailableError("A configured router has an invalid identity")
+            router_id = _id_text(router.get("_id")) or ""
+            router_status = _status_text(router.get("status"))
+            if router_status != "online":
+                self._log_candidate_exclusion(router_id or "missing", f"router_not_online:{router_status or 'missing'}")
+                continue
+            parsed_router_id = _oid(router_id)
+            if not parsed_router_id:
+                self._log_candidate_exclusion(router_id or "missing", "invalid_router_identity")
+                continue
+            router_id = str(parsed_router_id)
+            if router_id in router_ids:
+                logger.error(
+                    "Duplicate router identity prevents trusted HotSpot verification",
+                    extra={"event": "hotspot_router_candidate_ambiguous", "router_id": router_id},
+                )
+                raise ServiceUnavailableError("Duplicate router identities prevent trusted HotSpot verification")
+            router_ids.add(router_id)
+
             router_site = _id_text(router.get("site_id"))
+            if not router_site:
+                self._log_candidate_exclusion(router_id, "missing_router_site_mapping")
+                continue
             nas_id = router.get("nas_client_id")
             if nas_id:
                 nas = await _find_by_id(self.db.nas_clients, nas_id)
                 if not nas or _status_text(nas.get("status") or "active") in {"inactive", "disabled"}:
-                    raise ServiceUnavailableError("A configured router has no active NAS mapping")
+                    self._log_candidate_exclusion(router_id, "missing_or_inactive_nas_mapping")
+                    continue
                 nas_site = _id_text(nas.get("site_id"))
-                if router_site and nas_site and router_site != nas_site:
-                    raise ServiceUnavailableError("A configured router has conflicting site mappings")
-                router_site = router_site or nas_site
-            if not router_site:
-                raise ServiceUnavailableError("A configured router has no site mapping")
+                if not nas_site:
+                    self._log_candidate_exclusion(router_id, "missing_nas_site_mapping")
+                    continue
+                if router_site != nas_site:
+                    self._log_candidate_exclusion(router_id, "conflicting_router_nas_site_mapping")
+                    continue
             site = await _find_by_id(self.db.sites, router_site)
             if not site or _status_text(site.get("status")) != "active":
-                raise ServiceUnavailableError("A configured router is not attached to an active site")
+                reason = "missing_site_record" if not site else "site_inactive"
+                self._log_candidate_exclusion(router_id, reason)
+                continue
             candidates.append({"router_id": router_id, "site_id": router_site, "doc": router})
+        if not candidates:
+            raise ServiceUnavailableError("No eligible routers with valid active-site mappings are available for HotSpot verification")
         if settings.router_connection_mode != "vps_relay":
             raise ServiceUnavailableError("Trusted hotspot verification requires the configured VPS relay")
         return candidates
+
+    @staticmethod
+    def _log_candidate_exclusion(router_id: str, reason: str) -> None:
+        logger.warning(
+            "HotSpot attestation router candidate excluded",
+            extra={
+                "event": "hotspot_router_candidate_excluded",
+                "router_id": router_id,
+                "reason": reason,
+            },
+        )
 
     async def _new_challenge(self, candidate: dict, client_ip: Optional[str], client_mac: str) -> tuple[str, dict]:
         now = datetime.fromtimestamp(self.clock(), timezone.utc)
@@ -288,7 +316,12 @@ class HotspotAttestationService:
                 }
                 try:
                     reply = await self.relay.attest_hotspot_client(request)
-                except (RouterRelayError, Exception) as exc:
+                except RouterRelayError as exc:
+                    if exc.status_code == 403:
+                        self._log_candidate_exclusion(candidate["router_id"], "relay_router_site_not_allowlisted")
+                        return {"observed": False, "candidate_rejected": True}
+                    raise ServiceUnavailableError("The authenticated router relay is unavailable") from exc
+                except Exception as exc:
                     raise ServiceUnavailableError("The authenticated router relay is unavailable") from exc
                 return await self._verify_relay_reply(candidate, nonce, challenge, reply)
 
@@ -305,6 +338,8 @@ class HotspotAttestationService:
         matches = [item for item in results if item["observed"]]
         if len(matches) > 1:
             raise ConflictError("This device was observed on multiple routers; contact support")
+        if not matches and any(item.get("candidate_rejected") for item in results if isinstance(item, dict)):
+            raise ServiceUnavailableError("The relay does not authorize every configured router/site candidate")
         if not matches:
             raise NotFoundError("The router did not observe this client on an active HotSpot")
 
@@ -355,18 +390,19 @@ class HotspotAttestationService:
         router_id, site_id = str(doc.get("router_id") or ""), str(doc.get("site_id") or "")
         router = await _find_by_id(self.db.routers, router_id)
         site = await _find_by_id(self.db.sites, site_id)
-        if not router or str(router.get("status") or "").lower() == "disabled" or not site:
+        if not router or _status_text(router.get("status")) != "online" or not site:
             return None
         router_site = _id_text(router.get("site_id"))
+        if not router_site:
+            return None
         if router.get("nas_client_id"):
             nas_id = router["nas_client_id"]
             nas = await _find_by_id(self.db.nas_clients, nas_id)
             if not nas or _status_text(nas.get("status") or "active") in {"inactive", "disabled"}:
                 return None
             nas_site = _id_text(nas.get("site_id"))
-            if router_site and nas_site and router_site != nas_site:
+            if not nas_site or router_site != nas_site:
                 return None
-            router_site = router_site or nas_site
         if (
             router_site != _id_text(site_id)
             or _status_text(site.get("status")) != "active"

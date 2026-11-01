@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.dependencies import get_db, require_permission
-from app.core.exceptions import APIException, ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
 from app.core.logging import get_logger
 from app.models.user import Permission, UserInDB
 from app.schemas.hotspot import HotspotPlanCreate, HotspotPlanUpdate
@@ -234,37 +234,16 @@ async def purchase_hotspot_voucher(
 ):
     """Start a walk-up purchase after server-side device and site validation."""
     plan = await HotspotService(db).get_plan(data.plan_id)
-    if hotspot_context:
-        response.headers["Cache-Control"] = "no-store"
-    if plan.site_id and not hotspot_context:
-        raise ConflictError("A trusted router context is required for this site-specific package")
-    trusted_context = None
-    if hotspot_context:
-        try:
-            trusted_context = await HotspotAttestationService(db).attest_purchase_device(
-                raw_token=hotspot_context,
-                device_type=data.device_type,
-                client_ip=data.ip_address,
-                client_mac=data.device_mac,
-            )
-        except APIException:
-            if plan.site_id:
-                raise
-            # Global plans remain compatible with existing lease verification
-            # if the external relay has not implemented its Phase 4 contract.
-
-    if trusted_context:
-        verified_device = {
-            "mac_address": trusted_context.client_mac,
-            "ip_address": trusted_context.client_ip,
-            "router_id": trusted_context.router_id,
-            "site_id": trusted_context.site_id,
-        }
-    else:
-        verified_device = await _resolve_hotspot_device(
-            HotspotDeviceLookupRequest(ip_address=data.ip_address, mac_address=data.device_mac),
-            db,
-        )
+    if not hotspot_context:
+        raise ConflictError("Secure device verification is required before starting a HotSpot purchase")
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    trusted_context = await HotspotAttestationService(db).attest_purchase_device(
+        raw_token=hotspot_context,
+        device_type=data.device_type,
+        client_ip=data.ip_address,
+        client_mac=data.device_mac,
+    )
 
     from app.services.mpesa_service import MpesaService
     service = MpesaService(db)
@@ -272,9 +251,9 @@ async def purchase_hotspot_voucher(
         plan_id=data.plan_id,
         phone_number=data.phone_number,
         device_type=data.device_type,
-        device_mac=verified_device["mac_address"],
-        trusted_site_id=trusted_context.site_id if trusted_context else None,
-        trusted_router_id=trusted_context.router_id if trusted_context else None,
+        device_mac=trusted_context.client_mac,
+        trusted_site_id=trusted_context.site_id,
+        trusted_router_id=trusted_context.router_id,
     )
     return success_response(
         message="STK push sent - check your phone",

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from bson import ObjectId
 from fastapi import Response
@@ -169,8 +170,55 @@ async def test_site_purchase_without_context_is_rejected_before_device_or_paymen
         plan_id=str(plan_id), phone_number="254700000000", device_type="this_device",
         device_mac="AA:BB:CC:DD:EE:FF",
     )
-    with pytest.raises(ConflictError, match="trusted router context"):
+    with pytest.raises(ConflictError, match="Secure device verification"):
         await purchase_hotspot_voucher(request, Response(), None, portal_db)
+
+
+@pytest.mark.asyncio
+async def test_global_purchase_without_attestation_is_rejected_before_payment(portal_db, monkeypatch):
+    plan_id = await add_plan(portal_db, "Global 1 Hour")
+
+    async def unexpected_payment(*_args, **_kwargs):
+        raise AssertionError("Payment must not start without trusted device attestation")
+
+    monkeypatch.setattr(MpesaService, "initiate_hotspot_purchase", unexpected_payment)
+    request = HotspotPurchaseRequest(
+        plan_id=str(plan_id), phone_number="254700000000", device_type="this_device",
+        device_mac="AA:BB:CC:DD:EE:FF", ip_address="192.168.89.100",
+    )
+
+    with pytest.raises(ConflictError, match="Secure device verification"):
+        await purchase_hotspot_voucher(request, Response(), None, portal_db)
+
+
+@pytest.mark.asyncio
+async def test_global_purchase_revalidates_attestation_before_payment(portal_db, monkeypatch):
+    plan_id = await add_plan(portal_db, "Global 1 Hour")
+    router_id, site_id = str(ObjectId()), str(ObjectId())
+    calls = {}
+
+    async def attest(_service, **kwargs):
+        calls["attestation"] = kwargs
+        return SimpleNamespace(client_mac="AA:BB:CC:DD:EE:FF", site_id=site_id, router_id=router_id)
+
+    async def initiate(_service, **kwargs):
+        calls["payment"] = kwargs
+        return SimpleNamespace(checkout_request_id="mock-checkout")
+
+    monkeypatch.setattr("app.routes.hotspot.HotspotAttestationService.attest_purchase_device", attest)
+    monkeypatch.setattr(MpesaService, "initiate_hotspot_purchase", initiate)
+    request = HotspotPurchaseRequest(
+        plan_id=str(plan_id), phone_number="254700000000", device_type="this_device",
+        device_mac="AA:BB:CC:DD:EE:FF", ip_address="192.168.89.100",
+    )
+    response = Response()
+
+    result = await purchase_hotspot_voucher(request, response, "opaque-context", portal_db)
+
+    assert result["data"]["checkout_request_id"] == "mock-checkout"
+    assert calls["payment"]["trusted_site_id"] == site_id
+    assert calls["payment"]["trusted_router_id"] == router_id
+    assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.asyncio
