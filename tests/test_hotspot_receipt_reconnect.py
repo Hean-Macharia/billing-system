@@ -6,6 +6,7 @@ import pytest
 from fastapi import Response
 
 from app.core.exceptions import ConflictError
+from app.models.mpesa_transaction import MpesaTransactionInDB, MpesaTransactionStatus
 from app.routes import hotspot
 from app.schemas.portal import HotspotReconnectRequest
 
@@ -149,13 +150,21 @@ async def test_purchase_status_does_not_disclose_access_before_settlement(monkey
 
 @pytest.mark.asyncio
 async def test_purchase_status_releases_receipt_only_after_completed_settlement(monkeypatch):
-    transaction = SimpleNamespace(
-        status=SimpleNamespace(value="success"), settled=True,
+    # Exercise the real Pydantic DB model: unknown Mongo fields are otherwise
+    # discarded, which used to drop device_mac and make every poll return 409.
+    transaction = MpesaTransactionInDB(
+        _id="transaction-id",
+        transaction_type="hotspot_purchase",
+        checkout_request_id="checkout-id",
+        hotspot_plan_id="plan-id",
+        status=MpesaTransactionStatus.SUCCESS,
+        settled=True,
         settlement_status="completed", callback_received=True,
         settlement_review_required=False, voucher_code="UK1G00O1RX",
         mpesa_receipt_number="UK1G00O1RX", account_reference="bundle", amount=5,
-        result_desc="confirmed", id="transaction-id", router_id="router-1",
-        site_id="site-1", device_mac="AA:BB:CC:DD:EE:FF",
+        phone_number="254700000000", transaction_desc="HotSpot bundle",
+        result_desc="confirmed", router_id="router-1", site_id="site-1",
+        device_mac="AA:BB:CC:DD:EE:FF", device_type="this_device",
     )
 
     class FakeMpesa:

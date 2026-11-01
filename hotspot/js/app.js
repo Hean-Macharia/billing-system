@@ -10,7 +10,7 @@ function getDefaultApiBase() {
     }
 
     let API_BASE_URL = localStorage.getItem('hotspot_api_base') || getDefaultApiBase();
-    const SUPPORT_PHONE = '+254791196121';
+    const SUPPORT_PHONE = '+254716000034';
     const SUPPORT_EMAIL = 'heannjuki@gmail.com';
     const PORTAL_PARAMS = new URLSearchParams(window.location.search);
     const CAPTIVE_REDIRECT = MikrotikLogin.parseRedirectParameters(window.location.search);
@@ -133,16 +133,16 @@ function getDefaultApiBase() {
 
     async function checkBackend() {
       const status = document.getElementById('api-status');
-      status.className = 'api-status api-status-checking';
+      status.className = 'service-pill api-status api-status-checking';
       status.innerHTML = '<i></i> Checking service';
       try {
         await api('/health/ready');
-        status.className = 'api-status api-status-online';
+        status.className = 'service-pill api-status api-status-online';
         status.innerHTML = '<i></i> Service online';
         status.title = `Connected to ${API_BASE_URL}`;
         return true;
       } catch (error) {
-        status.className = 'api-status api-status-offline';
+        status.className = 'service-pill api-status api-status-offline';
         status.innerHTML = '<i></i> Service offline';
         status.title = error.message;
         return false;
@@ -623,6 +623,11 @@ function getDefaultApiBase() {
             showStillPendingScreen(sheet, checkoutRequestId);
           }
         } catch (error) {
+          if (error.status === 409) {
+            clearInterval(poll);
+            showReceiptRecoveryScreen(sheet);
+            return;
+          }
           if (attempts >= 30) {
             clearInterval(poll);
             showStillPendingScreen(sheet, checkoutRequestId, error.message);
@@ -631,6 +636,19 @@ function getDefaultApiBase() {
           polling = false;
         }
       }, 3000);
+    }
+
+    function showReceiptRecoveryScreen(sheet) {
+      if (!sheet?.isConnected) return;
+      sheet.innerHTML = `
+        <div class="status-screen">
+          <div class="status-icon waiting">${Icons.clock}</div>
+          <h3>Payment sent — finish connecting</h3>
+          <p>We could not continue checking this purchase for the current WiFi session. Do not pay again. Use the receipt from your M-Pesa confirmation to verify the completed payment and connect.</p>
+          <button class="btn btn-primary" id="recover-with-receipt" type="button">Connect with M-Pesa receipt</button>
+          <p class="device-status">The receipt is checked by the billing service; it does not start another payment.</p>
+        </div>`;
+      sheet.querySelector('#recover-with-receipt')?.addEventListener('click', openReceiptReconnect);
     }
 
     function showSuccessScreen(sheet, purchase) {

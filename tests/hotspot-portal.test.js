@@ -5,6 +5,20 @@ const { createLoginSubmission, parseRedirectParameters } = require('../hotspot/m
 
 const challenge = '0123456789abcdef0123456789abcdef';
 
+test('new captive portal home uses live packages and removes the retired server/ad copy', () => {
+  const html = fs.readFileSync(require.resolve('../hotspot/index.html'), 'utf8');
+  const carousel = fs.readFileSync(require.resolve('../hotspot/js/home-carousel.js'), 'utf8');
+  assert.match(html, /data-carousel-slide/);
+  assert.match(html, /id="plan-list"/);
+  assert.match(html, /id="device-identification-status"/);
+  assert.match(html, /id="connect-receipt"/);
+  assert.match(html, /id="voucher-login-form"/);
+  assert.match(html, /0716 000 034/);
+  assert.doesNotMatch(html, /M-Pesa Internet · Server|Promote your business|Advertise here|Choose a package, pay with M-Pesa, and get online fast/);
+  assert.match(carousel, /setInterval\(\(\) => show\(index \+ 1\), 6000\)/);
+  assert.match(carousel, /touchstart/);
+});
+
 test('HotSpot checkout uses trusted attestation context rather than ambiguous DHCP lookup', () => {
   const app = fs.readFileSync(require.resolve('../hotspot/js/app.js'), 'utf8');
   const checkout = app.slice(app.indexOf('function openPurchaseSheet'), app.indexOf('function showWaitingScreen'));
@@ -34,6 +48,15 @@ test('paid purchase waits for completed settlement, displays the receipt, then s
   assert.match(app, /X-Hotspot-Context': readHotspotContext\(\)/);
   assert.match(app, /router will open your original destination after acceptance/);
   assert.doesNotMatch(app, /YOU ARE CONNECTED|You’re connected/);
+});
+
+test('purchase status conflicts stop polling and offer receipt recovery without another payment', () => {
+  const app = fs.readFileSync(require.resolve('../hotspot/js/app.js'), 'utf8');
+  assert.match(app, /if \(error\.status === 409\)\s*\{\s*clearInterval\(poll\);\s*showReceiptRecoveryScreen\(sheet\);/);
+  assert.match(app, /Do not pay again/);
+  assert.match(app, /Connect with M-Pesa receipt/);
+  const recovery = app.slice(app.indexOf('function showReceiptRecoveryScreen'), app.indexOf('function showSuccessScreen'));
+  assert.match(recovery, /addEventListener\('click', openReceiptReconnect\)/);
 });
 
 test('receipt reconnect calls the backend with opaque trusted context and never starts payment', () => {

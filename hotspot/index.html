@@ -1,126 +1,108 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1"/>
-<title>DEVZEN CREATIONS WiFi</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><rect width=%2224%22 height=%2224%22 rx=%226%22 fill=%22%23B91C1C%22/><path d=%22M4 9.5a14 14 0 0116 0%22 stroke=%22%23FFFFFF%22 stroke-width=%222%22 fill=%22none%22/><path d=%226 13a10 10 0 0112 0%22 stroke=%22%23FFFFFF%22 stroke-width=%222%22 fill=%22none%22/><circle cx=%2212%22 cy=%2217%22 r=%221.6%22 fill=%22%23FFFFFF%22/></svg>"/>
-<link rel="stylesheet" href="css/hotspot.css"><link rel="stylesheet" href="../css/brand-system.css">
-<link rel="stylesheet" href="/frontend/shared/css/modern-theme.css?v=20261101"></head>
-<body>
-  <div class="page-shell">
-    <header class="topbar">
-      <div class="brand">
-        <svg class="brand-mark" viewBox="0 0 40 40" role="img" aria-label="DEVZEN CREATIONS signal logo"><rect x="1" y="1" width="38" height="38" rx="12" fill="#2563EB"/><path d="M9 15c6.2-5.8 15.8-5.8 22 0M12.8 19c4.1-3.8 10.3-3.8 14.4 0M16.7 23c1.9-1.8 4.7-1.8 6.6 0" fill="none" stroke="white" stroke-width="2.3" stroke-linecap="round"/><circle cx="20" cy="27" r="1.7" fill="white"/></svg>
-        <div class="brand-text">
-          <span class="brand-name">DEVZEN CREATIONS</span>
-          <span class="brand-sub">CONNECT</span>
-        </div>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1629">
+  <meta name="description" content="Choose a DEVZEN CREATIONS WiFi package and connect securely.">
+  <title>DEVZEN CREATIONS WiFi</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect width=%2240%22 height=%2240%22 rx=%2212%22 fill=%22%2327b5f5%22/><path d=%22M8 16c8-8 16-8 24 0M12 21c5-5 11-5 16 0M17 26c2-2 4-2 6 0%22 fill=%22none%22 stroke=%22white%22 stroke-width=%222%22 stroke-linecap=%22round%22/></svg>">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+  <link rel="stylesheet" href="css/responsive.css">
+  <link rel="stylesheet" href="/frontend/shared/css/modern-theme.css?v=20261101">
+</head>
+<body class="hotspot-home">
+  <div class="portal-shell">
+    <header class="portal-header">
+      <a class="brand-lockup" href="/hotspot/" aria-label="DEVZEN CREATIONS WiFi home">
+        <span class="brand-symbol" aria-hidden="true">D</span>
+        <span><strong>DEVZEN CREATIONS</strong><small>WiFi access</small></span>
+      </a>
+      <div class="header-actions">
+        <span class="service-pill" id="api-status" role="status"><i aria-hidden="true"></i> Checking service</span>
+        <button class="button button-outline" id="connect-receipt" type="button">Connect</button>
       </div>
-      <div class="hotspot-actions">
-        <span class="api-status api-status-checking" id="api-status" role="status"><i></i> Checking service</span>
-        <button class="cta-mini" id="connect-receipt" type="button">Connect</button>
-        <button class="cta-mini" id="backend-settings" type="button" title="Configure and check the billing server">M-Pesa Internet · Server</button>
-      </div>
+      <button id="backend-settings" type="button" hidden aria-hidden="true" tabindex="-1">API settings</button>
     </header>
 
     <main>
-      <section class="hero-card">
-        <div class="hero-copy">
-          <div class="eyebrow">Internet access</div>
-          <h1>Connect in seconds.</h1>
-          <p>Choose a package, pay with M-Pesa, and get online fast. Simple, fast, and built for busy homes, offices, and guest WiFi users.</p>
-
-          <div class="howto">
-            <div class="step">
-              <div class="step-no">1</div>
-              <strong>Click package</strong>
-              <span>Pick a bundle that matches your data needs.</span>
-            </div>
-            <div class="step">
-              <div class="step-no">2</div>
-              <strong>Enter phone</strong>
-              <span>Type the number you want to receive the STK push on.</span>
-            </div>
-            <div class="step">
-              <div class="step-no">3</div>
-              <strong>Complete payment</strong>
-              <span>Confirm the prompt on your phone and start browsing.</span>
-            </div>
-          </div>
+      <section class="welcome-panel" aria-label="WiFi connection guide">
+        <div class="welcome-heading">
+          <span class="eyebrow">WELCOME TO YOUR WIFI</span>
+          <h1>Get online in <em>three steps.</em></h1>
         </div>
-
-        <div class="promo-stack" aria-label="Package highlights">
-          <div class="promo-card"><div class="label">Flexible bundles</div><strong>Choose the time and data you need</strong><span>Live prices and details come from the billing service.</span></div>
-          <div class="promo-card"><div class="label">Simple checkout</div><strong>Pay securely with M-Pesa</strong><span>Your access voucher is shown only after payment is confirmed.</span></div>
+        <div class="carousel" id="portal-carousel" aria-roledescription="carousel" aria-label="WiFi information">
+          <button class="carousel-arrow previous" type="button" aria-label="Previous slide" data-carousel-prev>‹</button>
+          <div class="carousel-window">
+            <article class="carousel-slide is-active" data-carousel-slide aria-hidden="false">
+              <h2>How to connect</h2>
+              <ol class="connect-steps">
+                <li><span>01</span><p><strong>Choose</strong> a package below</p></li>
+                <li><span>02</span><p><strong>Enter</strong> your M-Pesa number</p></li>
+                <li><span>03</span><p><strong>Approve</strong> the prompt with your PIN</p></li>
+              </ol>
+              <p class="slide-note">Need help? Call <a href="tel:+254716000034">0716 000 034</a></p>
+            </article>
+            <article class="carousel-slide" data-carousel-slide aria-hidden="true" inert>
+              <span class="slide-icon" aria-hidden="true">✦</span>
+              <h2>Fast, simple WiFi</h2>
+              <p>Select the package that fits your day. Current packages and prices are loaded securely from the billing service.</p>
+              <p class="slide-note">Payment is confirmed before access is issued.</p>
+            </article>
+            <article class="carousel-slide" data-carousel-slide aria-hidden="true" inert>
+              <span class="slide-icon" aria-hidden="true">⌁</span>
+              <h2>Fair use, reliable access</h2>
+              <p>Packages apply to the devices and time allowance shown. Keep your M-Pesa receipt; it is your WiFi access token.</p>
+              <p class="slide-note">Your device signs in automatically after confirmed payment.</p>
+            </article>
+          </div>
+          <button class="carousel-arrow next" type="button" aria-label="Next slide" data-carousel-next>›</button>
+          <div class="carousel-dots" role="group" aria-label="Choose information slide">
+            <button type="button" class="is-active" aria-label="Slide 1" aria-current="true" data-carousel-dot="0"></button>
+            <button type="button" aria-label="Slide 2" data-carousel-dot="1"></button>
+            <button type="button" aria-label="Slide 3" data-carousel-dot="2"></button>
+          </div>
         </div>
       </section>
 
-      <aside class="ad-banner" aria-label="Business advertising">
-        <div>
-          <strong>Promote your business on DEVZEN CREATIONS WiFi</strong>
-          <p>Reach customers while they connect. Contact us to ask about advertising placements.</p>
+      <section class="catalog-section" aria-labelledby="packages-heading">
+        <div class="section-heading">
+          <div><span class="eyebrow">CHOOSE YOUR ACCESS</span><h2 id="packages-heading">Internet packages</h2></div>
+          <span class="live-label"><i aria-hidden="true"></i> Live packages</span>
         </div>
-        <a href="mailto:heannjuki@gmail.com?subject=WiFi%20advertising">Advertise here</a>
-      </aside>
+        <p id="device-identification-status" class="device-status" role="status" aria-live="polite">Checking this WiFi device…</p>
+        <div id="plan-list" class="package-list" aria-busy="true">
+          <article class="package-skeleton" aria-hidden="true"><span></span><span></span><span></span></article>
+          <article class="package-skeleton" aria-hidden="true"><span></span><span></span><span></span></article>
+          <article class="package-skeleton" aria-hidden="true"><span></span><span></span><span></span></article>
+        </div>
+      </section>
 
-      <section class="section" aria-labelledby="voucher-heading">
-        <div class="section-head">
-          <h2 id="voucher-heading">Already have a voucher?</h2>
-          <div class="tag">Check &amp; connect</div>
-        </div>
-        <p id="router-login-notice" class="voucher-result" role="status" aria-live="polite"></p>
-        <form class="voucher-login" id="voucher-login-form">
-          <div>
-            <label for="voucher-login-code">Enter your WiFi voucher code</label>
-            <input type="text" id="voucher-login-code" autocomplete="off" maxlength="32" required />
-          </div>
-          <button type="submit" class="btn btn-primary" id="voucher-login-submit">Verify voucher</button>
-          <p class="voucher-result" id="voucher-login-result" role="status" aria-live="polite"></p>
+      <section class="access-section" aria-label="Voucher access">
+        <div class="access-heading"><span class="access-icon" aria-hidden="true">↗</span><div><span class="eyebrow">ALREADY PAID?</span><h2>Connect with your receipt or voucher</h2></div></div>
+        <p id="router-login-notice" class="notice-text" role="status" aria-live="polite"></p>
+        <form class="voucher-form" id="voucher-login-form">
+          <label for="voucher-login-code">M-Pesa receipt or WiFi voucher</label>
+          <div class="voucher-form-row"><input type="text" id="voucher-login-code" name="voucher_code" autocomplete="off" maxlength="32" placeholder="Enter your access code" required><button class="button button-primary" type="submit" id="voucher-login-submit">Verify &amp; connect</button></div>
+          <p id="voucher-login-result" class="notice-text" role="status" aria-live="polite"></p>
         </form>
-      </section>
-
-      <section class="section" aria-labelledby="packages-heading">
-        <div class="section-head">
-          <h2 id="packages-heading">Internet packages</h2>
-          <div class="tag">Live bundles</div>
-        </div>
-        <p id="device-identification-status" class="device-status" role="status" aria-live="polite">Identifying this device from the MikroTik hotspot…</p>
-        <div id="plan-list" class="plan-grid" aria-busy="true"><article class="plan-card skeleton-plan" aria-hidden="true"><span></span><span></span><span></span></article><article class="plan-card skeleton-plan" aria-hidden="true"><span></span><span></span><span></span></article><article class="plan-card skeleton-plan" aria-hidden="true"><span></span><span></span><span></span></article></div>
-      </section>
-
-      <div class="info-grid">
-        <section class="info-box">
-          <h3>Contact</h3>
-          <ul class="contact-list">
-            <li><a href="tel:0791196121">0791196121</a></li>
-            <li><a href="mailto:heannjuki@gmail.com">heannjuki@gmail.com</a></li>
-          </ul>
-        </section>
-
-        <section class="info-box">
-          <h3>Resources</h3>
-          <ul class="resource-list">
-            <li><button class="resource-action" type="button" id="check-balance">Check voucher status</button></li>
-            <li><button class="resource-action" type="button" id="free-trial">Free trial</button></li>
-            <li><span>My IP: <strong id="client-ip">Not provided by hotspot</strong></span></li>
-          </ul>
-        </section>
-      </div>
-
-      <section class="section">
-        <div class="section-head">
-          <h2>Privacy &amp; service terms</h2>
-        </div>
-        <p>For the DEVZEN CREATIONS privacy policy or service terms, contact <a href="mailto:heannjuki@gmail.com">heannjuki@gmail.com</a>.</p>
+        <div class="secondary-actions"><button class="text-button" type="button" id="check-balance">Check voucher status</button><span aria-hidden="true">·</span><button class="text-button" type="button" id="free-trial">Request free trial</button></div>
       </section>
     </main>
 
-    <div class="footer-note">© 2026 DEVZEN CREATIONS | All Rights Reserved.</div>
+    <footer class="portal-footer">
+      <a class="footer-brand" href="/hotspot/">DEVZEN CREATIONS</a>
+      <a href="tel:+254716000034">Support · 0716 000 034</a>
+      <span class="client-address" hidden>Device IP: <b id="client-ip">Not provided</b></span>
+      <a href="/legal.html">Terms &amp; privacy</a>
+      <small>Secure WiFi billing</small>
+    </footer>
   </div>
-
   <script src="mikrotik-login.js"></script>
   <script src="js/api-request.js"></script>
+  <script src="js/home-carousel.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

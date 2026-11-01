@@ -29,7 +29,9 @@ class MpesaTransaction(BaseModel):
     subscription_id: Optional[str] = None
     hotspot_plan_id: Optional[str] = None  # set when transaction_type == "hotspot_purchase"
     site_id: Optional[str] = None  # server snapshot from the selected HotSpot plan
-    router_id: Optional[str] = None  # populated only from a future trusted router context
+    router_id: Optional[str] = None  # trusted router snapshot for a HotSpot purchase
+    device_type: Optional[str] = None  # HotSpot purchase device selection
+    device_mac: Optional[str] = None  # normalized verified client MAC for status binding
     purchase_idempotency_key: Optional[str] = None
     voucher_code: Optional[str] = None  # populated once a hotspot_purchase settles successfully
     amount: float = Field(..., gt=0)
