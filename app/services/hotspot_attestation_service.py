@@ -96,6 +96,39 @@ def _oid(value: Any) -> Optional[ObjectId]:
         return None
 
 
+def _id_text(value: Any) -> Optional[str]:
+    """Normalize Mongo ObjectId and its string representation consistently."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = _oid(text)
+    return str(parsed) if parsed is not None else text
+
+
+def _id_query_values(value: Any) -> list[Any]:
+    """Match legacy string references and BSON ObjectId references safely."""
+    text = _id_text(value)
+    if not text:
+        return []
+    parsed = _oid(text)
+    return [parsed, text] if parsed is not None else [text]
+
+
+async def _find_by_id(collection: Any, value: Any) -> Optional[dict]:
+    candidates = _id_query_values(value)
+    if not candidates:
+        return None
+    return await collection.find_one({"_id": {"$in": candidates}})
+
+
+def _status_text(value: Any) -> str:
+    if hasattr(value, "value"):
+        value = value.value
+    return str(value or "").strip().lower()
+
+
 async def _rows(collection: Any, query: dict, limit: int = MAX_ROUTER_CANDIDATES + 1) -> list[dict]:
     cursor = collection.find(query)
     if hasattr(cursor, "to_list"):
@@ -119,6 +152,13 @@ class HotspotAttestationService:
         routers = await _rows(self.db.routers, {"status": {"$ne": "disabled"}})
         if len(routers) > MAX_ROUTER_CANDIDATES:
             raise ServiceUnavailableError("Router context verification is unavailable for this router inventory")
+        # Offline devices cannot currently observe a captive client. Excluding
+        # them avoids making an unrelated failed router a prerequisite for an
+        # online site while still validating every eligible router below.
+        routers = [
+            router for router in routers
+            if _status_text(router.get("status")) not in {"disabled", "offline"}
+        ]
         if not routers:
             raise ServiceUnavailableError("No configured MikroTik routers are available for verification")
 
@@ -127,22 +167,20 @@ class HotspotAttestationService:
             router_id = str(router.get("_id") or "")
             if not _oid(router_id):
                 raise ServiceUnavailableError("A configured router has an invalid identity")
-            router_site = str(router.get("site_id") or "") or None
+            router_site = _id_text(router.get("site_id"))
             nas_id = router.get("nas_client_id")
             if nas_id:
-                nas_oid = _oid(nas_id)
-                nas_query = {"_id": {"$in": [nas_id, nas_oid]}} if nas_oid else {"_id": nas_id}
-                nas = await self.db.nas_clients.find_one(nas_query)
-                if not nas or str(nas.get("status") or "active").lower() in {"inactive", "disabled"}:
+                nas = await _find_by_id(self.db.nas_clients, nas_id)
+                if not nas or _status_text(nas.get("status") or "active") in {"inactive", "disabled"}:
                     raise ServiceUnavailableError("A configured router has no active NAS mapping")
-                nas_site = str(nas.get("site_id") or "") or None
+                nas_site = _id_text(nas.get("site_id"))
                 if router_site and nas_site and router_site != nas_site:
                     raise ServiceUnavailableError("A configured router has conflicting site mappings")
                 router_site = router_site or nas_site
             if not router_site:
                 raise ServiceUnavailableError("A configured router has no site mapping")
-            site = await self.db.sites.find_one({"_id": _oid(router_site)})
-            if not site or str(site.get("status") or "active").lower() != "active":
+            site = await _find_by_id(self.db.sites, router_site)
+            if not site or _status_text(site.get("status")) != "active":
                 raise ServiceUnavailableError("A configured router is not attached to an active site")
             candidates.append({"router_id": router_id, "site_id": router_site, "doc": router})
         if settings.router_connection_mode != "vps_relay":
@@ -315,25 +353,23 @@ class HotspotAttestationService:
         if not doc:
             return None
         router_id, site_id = str(doc.get("router_id") or ""), str(doc.get("site_id") or "")
-        router = await self.db.routers.find_one({"_id": _oid(router_id)})
-        site = await self.db.sites.find_one({"_id": _oid(site_id)})
+        router = await _find_by_id(self.db.routers, router_id)
+        site = await _find_by_id(self.db.sites, site_id)
         if not router or str(router.get("status") or "").lower() == "disabled" or not site:
             return None
-        router_site = str(router.get("site_id") or "") or None
+        router_site = _id_text(router.get("site_id"))
         if router.get("nas_client_id"):
             nas_id = router["nas_client_id"]
-            nas_oid = _oid(nas_id)
-            nas_query = {"_id": {"$in": [nas_id, nas_oid]}} if nas_oid else {"_id": nas_id}
-            nas = await self.db.nas_clients.find_one(nas_query)
-            if not nas or str(nas.get("status") or "active").lower() in {"inactive", "disabled"}:
+            nas = await _find_by_id(self.db.nas_clients, nas_id)
+            if not nas or _status_text(nas.get("status") or "active") in {"inactive", "disabled"}:
                 return None
-            nas_site = str(nas.get("site_id") or "") or None
+            nas_site = _id_text(nas.get("site_id"))
             if router_site and nas_site and router_site != nas_site:
                 return None
             router_site = router_site or nas_site
         if (
-            router_site != site_id
-            or str(site.get("status") or "active").lower() != "active"
+            router_site != _id_text(site_id)
+            or _status_text(site.get("status")) != "active"
         ):
             return None
         return TrustedRouterContext(

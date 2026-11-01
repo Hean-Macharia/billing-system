@@ -143,6 +143,119 @@ async def test_relay_unavailability_fails_closed(attestation_db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_active_router_with_objectid_site_reference_is_a_candidate(attestation_db, monkeypatch):
+    site_id = ObjectId()
+    router_id = ObjectId()
+    await attestation_db.sites.insert_one({"_id": site_id, "name": "Nyaururu Main Site", "status": "active"})
+    await attestation_db.routers.insert_one({
+        "_id": router_id,
+        "name": "MikroTik-Nyaururu-RB951",
+        "site_id": site_id,
+        "status": "online",
+    })
+    service = make_service(attestation_db, FakeRelay(), monkeypatch)
+
+    candidates = await service._candidate_routers()
+
+    assert candidates[0]["router_id"] == str(router_id)
+    assert candidates[0]["site_id"] == str(site_id)
+
+
+@pytest.mark.asyncio
+async def test_site_lookup_accepts_string_objectid_storage_variants(attestation_db, monkeypatch):
+    site_id = ObjectId()
+    router_id = ObjectId()
+    await attestation_db.sites.insert_one({"_id": str(site_id), "name": "Nyaururu Main Site", "status": "active"})
+    await attestation_db.routers.insert_one({
+        "_id": router_id,
+        "name": "MikroTik-Nyaururu-RB951",
+        "site_id": site_id,
+        "status": "online",
+    })
+
+    candidates = await make_service(attestation_db, FakeRelay(), monkeypatch)._candidate_routers()
+
+    assert candidates[0]["site_id"] == str(site_id)
+
+
+@pytest.mark.asyncio
+async def test_inactive_site_is_rejected(attestation_db, monkeypatch):
+    _, _ = await seed_router(attestation_db, "Disabled site router", "Nyaururu", site_status="inactive")
+    service = make_service(attestation_db, FakeRelay(), monkeypatch)
+
+    with pytest.raises(ServiceUnavailableError, match="not attached to an active site"):
+        await service._candidate_routers()
+
+
+@pytest.mark.asyncio
+async def test_missing_site_is_rejected(attestation_db, monkeypatch):
+    await attestation_db.routers.insert_one({
+        "_id": ObjectId(), "name": "Orphan router", "site_id": str(ObjectId()), "status": "online",
+    })
+    service = make_service(attestation_db, FakeRelay(), monkeypatch)
+
+    with pytest.raises(ServiceUnavailableError, match="not attached to an active site"):
+        await service._candidate_routers()
+
+
+@pytest.mark.asyncio
+async def test_conflicting_router_and_nas_site_ids_are_rejected(attestation_db, monkeypatch):
+    router_site = ObjectId()
+    nas_site = ObjectId()
+    router_id = ObjectId()
+    nas_id = ObjectId()
+    await attestation_db.sites.insert_many([
+        {"_id": router_site, "name": "Site A", "status": "active"},
+        {"_id": nas_site, "name": "Site B", "status": "active"},
+    ])
+    await attestation_db.nas_clients.insert_one({
+        "_id": nas_id, "site_id": str(nas_site), "status": "active",
+    })
+    await attestation_db.routers.insert_one({
+        "_id": router_id,
+        "name": "Conflicted router",
+        "site_id": router_site,
+        "nas_client_id": str(nas_id),
+        "status": "online",
+    })
+    service = make_service(attestation_db, FakeRelay(), monkeypatch)
+
+    with pytest.raises(ServiceUnavailableError, match="conflicting site mappings"):
+        await service._candidate_routers()
+
+
+@pytest.mark.asyncio
+async def test_matching_router_is_selected_among_multiple_online_routers(attestation_db, monkeypatch):
+    nyarururu_id, _ = await seed_router(attestation_db, "MikroTik-Nyaururu-RB951", "Nyaururu")
+    await seed_router(attestation_db, "Nakuru router", "Nakuru")
+    await create_nonce_index(attestation_db)
+    service = make_service(attestation_db, FakeRelay({nyarururu_id}), monkeypatch)
+
+    result = await service.create_context(CLIENT_IP, CLIENT_MAC)
+    context = await service.get_context(result["context_token"])
+
+    assert context.router_id == nyarururu_id
+
+
+@pytest.mark.asyncio
+async def test_offline_unrelated_router_does_not_block_online_site(attestation_db, monkeypatch):
+    online_id, online_site_id = await seed_router(attestation_db, "MikroTik-Nyaururu-RB951", "Nyaururu")
+    await attestation_db.routers.insert_one({
+        "_id": ObjectId(),
+        "name": "Offline CCR2004",
+        "site_id": str(ObjectId()),  # stale relationship on an offline router
+        "status": "offline",
+    })
+    service = make_service(attestation_db, FakeRelay({online_id}), monkeypatch)
+
+    candidates = await service._candidate_routers()
+    context = await service.create_context(CLIENT_IP, CLIENT_MAC)
+
+    assert [candidate["router_id"] for candidate in candidates] == [online_id]
+    assert (await service.get_context(context["context_token"])).site_id == online_site_id
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("evidence", [
     {"dhcp_lease_match": False, "dhcp_lease_status": "bound", "hotspot_host_match": True, "observation_age_seconds": 1},
     {"dhcp_lease_match": True, "dhcp_lease_status": "waiting", "hotspot_host_match": True, "observation_age_seconds": 1},
