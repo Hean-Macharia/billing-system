@@ -4,6 +4,17 @@ from mongomock_motor import AsyncMongoMockClient
 from app.core.database import Database, INDEXES
 
 
+def test_purchase_transaction_voucher_index_is_required_for_settlement_safety():
+    purchase_index = next(
+        index
+        for index in INDEXES["vouchers"]
+        if index["keys"] == [("purchase_transaction_id", 1)]
+    )
+    assert purchase_index["unique"] is True
+    assert purchase_index["sparse"] is True
+    assert purchase_index["critical"] is True
+
+
 @pytest.mark.asyncio
 async def test_index_creation_is_repeatable_without_mutating_definitions():
     client = AsyncMongoMockClient(tz_aware=True)

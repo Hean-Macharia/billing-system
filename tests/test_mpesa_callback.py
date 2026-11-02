@@ -567,6 +567,10 @@ async def test_failed_verified_settlement_is_retried_idempotently():
     }
 
     failed = await service.process_callback(body)
+    await db.mpesa_transactions.update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"settlement_retry_after": datetime.now(timezone.utc) - timedelta(seconds=1)}},
+    )
     retried = await service.process_callback(body)
 
     assert failed.settled is False

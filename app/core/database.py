@@ -79,7 +79,15 @@ INDEXES = {
     ],
     "vouchers": [
         {"keys": [("voucher_code", 1)], "unique": True},
-        {"keys": [("purchase_transaction_id", 1)], "unique": True, "sparse": True},
+        {
+            "keys": [("purchase_transaction_id", 1)],
+            "unique": True,
+            "sparse": True,
+            # Settlement may be retried after its five-minute lease expires.
+            # This index is the cross-process guarantee that overlapping
+            # retries cannot issue two vouchers for one paid transaction.
+            "critical": True,
+        },
         {"keys": [("batch_id", 1)]},
         {"keys": [("status", 1)]},
         {"keys": [("expiry_date", 1)]},

@@ -629,7 +629,7 @@ function getDefaultApiBase() {
       });
     }
 
-    function showWaitingScreen(overlay, checkoutRequestId) {
+    function showWaitingScreen(overlay, checkoutRequestId, contextRecoveryAttempt = 0) {
       if (!overlay?.isConnected) return;
       const sheet = overlay.querySelector('.sheet-body');
       sheet.innerHTML = `
@@ -668,7 +668,20 @@ function getDefaultApiBase() {
         } catch (error) {
           if (error.status === 409) {
             clearInterval(poll);
-            showReceiptRecoveryScreen(sheet);
+            // Refresh only when the server explicitly says this context is
+            // absent or expired. A purchase/device binding conflict must not
+            // be retried as though it were an expired session.
+            const contextExpired = /context.{0,40}(missing|expired|required)/i.test(error.message || '');
+            if (contextExpired && contextRecoveryAttempt === 0 && CAPTIVE_REDIRECT.ok) {
+              saveHotspotContext('');
+              const freshContext = await attestCurrentHotspotDevice();
+              if (freshContext && overlay.isConnected) {
+                showWaitingScreen(overlay, checkoutRequestId, 1);
+                return;
+              }
+            }
+            saveHotspotContext('');
+            showReceiptRecoveryScreen(sheet, error.message);
             return;
           }
           if (attempts >= 30) {
@@ -681,13 +694,14 @@ function getDefaultApiBase() {
       }, 3000);
     }
 
-    function showReceiptRecoveryScreen(sheet) {
+    function showReceiptRecoveryScreen(sheet, reason = '') {
       if (!sheet?.isConnected) return;
       sheet.innerHTML = `
         <div class="status-screen">
           <div class="status-icon waiting">${Icons.clock}</div>
           <h3>Payment sent — finish connecting</h3>
           <p>We could not continue checking this purchase for the current WiFi session. Do not pay again. Use the receipt from your M-Pesa confirmation to verify the completed payment and connect.</p>
+          ${reason ? `<p class="device-status">${escapeHtml(reason)}</p>` : ''}
           <button class="btn btn-primary" id="recover-with-receipt" type="button">Connect with M-Pesa receipt</button>
           <p class="device-status">The receipt is checked by the billing service; it does not start another payment.</p>
         </div>`;

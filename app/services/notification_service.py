@@ -5,9 +5,9 @@ Replaces a placeholder stub (send_sms/send_email that just returned
 implementation.
 
 Design principle: a notification failure must never break the business
-operation that triggered it (an invoice can be generated even if the SMS
-about it fails to send). So notify() catches everything internally and
-always returns a Notification record rather than raising.
+operation that triggered it. Delivery and notification audit persistence
+are both best-effort, and notify() returns an in-memory Notification when
+the audit store is unavailable.
 
 SMS delivery only actually happens if AFRICAS_TALKING_USERNAME and
 AFRICAS_TALKING_API_KEY are both set in the environment - there were no
@@ -56,7 +56,9 @@ class NotificationService:
             body = resp.json()
             recipients = body.get("SMSMessageData", {}).get("Recipients", [])
             if not recipients or recipients[0].get("statusCode") not in (100, 101):
-                raise RuntimeError(f"Africa's Talking rejected the message: {body}")
+                # Provider responses may echo destination/recipient metadata;
+                # keep the exception generic so it cannot leak into logs.
+                raise RuntimeError("SMS provider rejected the message")
 
     async def notify(
         self,
@@ -78,8 +80,11 @@ class NotificationService:
                 status = NotificationStatus.SENT
             except Exception as exc:  # noqa: BLE001 - never let a notification failure propagate
                 status = NotificationStatus.FAILED
-                error = str(exc)
-                logger.warning(f"SMS notification failed for {phone}: {exc}")
+                error = f"SMS delivery failed ({type(exc).__name__})"
+                logger.warning(
+                    "SMS notification delivery failed",
+                    extra={"event": "notification_delivery_failed", "exception_class": type(exc).__name__},
+                )
         elif not phone:
             error = "No phone number on file"
         # else: SMS not configured - stays LOG_ONLY/SKIPPED, which is expected, not an error
@@ -89,7 +94,16 @@ class NotificationService:
             "channel": channel.value, "status": status.value, "subject": subject, "body": body,
             "error": error, "created_at": now,
         }
-        result = await self.collection.insert_one(doc)
+        try:
+            result = await self.collection.insert_one(doc)
+        except Exception as exc:  # notification persistence is also best-effort
+            logger.warning(
+                "Notification audit persistence failed",
+                extra={"event": "notification_persistence_failed", "exception_class": type(exc).__name__},
+            )
+            # Return the in-memory result so callers can retain the expected
+            # service contract while the business operation remains intact.
+            return Notification(**doc)
         doc["_id"] = str(result.inserted_id)
         return Notification(**doc)
 

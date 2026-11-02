@@ -339,12 +339,24 @@ async def purchase_status(
 ):
     """Return checkout state only to the same short-lived trusted device context."""
     from app.services.mpesa_service import MpesaService
+    correlation_id = uuid.uuid4().hex
+    response.headers["X-Correlation-ID"] = correlation_id
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     service = MpesaService(db)
     tx = await service.get_by_checkout_id(checkout_request_id)
     if not hotspot_context:
+        logger.info(
+            "HotSpot purchase status denied",
+            extra={"event": "hotspot_purchase_status_denied", "correlation_id": correlation_id, "stage": "context", "reason": "missing_context"},
+        )
         raise ConflictError("Secure device context is required to check this purchase")
     trusted = await HotspotAttestationService(db).get_context(hotspot_context)
     if not trusted:
+        logger.info(
+            "HotSpot purchase status denied",
+            extra={"event": "hotspot_purchase_status_denied", "correlation_id": correlation_id, "stage": "context", "reason": "context_expired_or_invalid"},
+        )
         raise ConflictError("The trusted WiFi context is missing or expired. Reopen the WiFi sign-in page")
     normalized_mac = str(getattr(trusted, "client_mac", "")).replace("-", ":").upper()
     transaction_mac = str(getattr(tx, "device_mac", "")).replace("-", ":").upper()
@@ -363,7 +375,24 @@ async def purchase_status(
         or not initiating_mac
         or initiating_mac != normalized_mac
     ):
+        logger.info(
+            "HotSpot purchase status denied",
+            extra={
+                "event": "hotspot_purchase_status_denied",
+                "correlation_id": correlation_id,
+                "stage": "purchase_binding",
+                "reason": "device_router_or_site_mismatch",
+                "router_matches": initiating_router_id == str(trusted.router_id),
+                "site_matches": initiating_site_id == str(trusted.site_id),
+                "device_matches": bool(initiating_mac and initiating_mac == normalized_mac),
+            },
+        )
         raise ConflictError("This purchase does not belong to the currently verified WiFi device")
+    # Retry a due settlement only after the caller has proved possession of
+    # the trusted context bound to this purchase. This path never asks Daraja
+    # again; only a callback already verified by the provider can settle.
+    status_reader = getattr(service, "get_hotspot_purchase_status", service.get_by_checkout_id)
+    tx = await status_reader(checkout_request_id)
     settled = (
         tx.status.value == "success"
         and tx.settled is True
@@ -378,8 +407,6 @@ async def purchase_status(
             "purchase_transaction_id": tx.id,
         }, {"expiry_date": 1})
     expires_at = voucher.get("expiry_date") if voucher else None
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Pragma"] = "no-cache"
     return success_response(
         message="Purchase status retrieved",
         data={

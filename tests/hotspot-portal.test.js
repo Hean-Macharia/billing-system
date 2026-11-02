@@ -13,7 +13,7 @@ test('new captive portal home uses live packages and removes the retired server/
   assert.match(html, /id="device-identification-status"/);
   assert.match(html, /id="connect-receipt"/);
   assert.match(html, /id="voucher-login-form"/);
-  assert.match(html, /0716 000 034/);
+  assert.match(html, /0791196121/);
   assert.doesNotMatch(html, /M-Pesa Internet · Server|Promote your business|Advertise here|Choose a package, pay with M-Pesa, and get online fast/);
   assert.match(carousel, /setInterval\(\(\) => show\(index \+ 1\), 6000\)/);
   assert.match(carousel, /touchstart/);
@@ -50,9 +50,14 @@ test('paid purchase waits for completed settlement, displays the receipt, then s
   assert.doesNotMatch(app, /YOU ARE CONNECTED|You’re connected/);
 });
 
-test('purchase status conflicts stop polling and offer receipt recovery without another payment', () => {
+test('purchase status conflicts clear stale context and offer receipt recovery without another payment', () => {
   const app = fs.readFileSync(require.resolve('../hotspot/js/app.js'), 'utf8');
-  assert.match(app, /if \(error\.status === 409\)\s*\{\s*clearInterval\(poll\);\s*showReceiptRecoveryScreen\(sheet\);/);
+  const conflictHandler = app.slice(app.indexOf("if (error.status === 409)"), app.indexOf("if (attempts >= 30)", app.indexOf("if (error.status === 409)")));
+  assert.match(conflictHandler, /clearInterval\(poll\)/);
+  assert.match(conflictHandler, /contextExpired && contextRecoveryAttempt === 0/);
+  assert.match(conflictHandler, /showWaitingScreen\(overlay, checkoutRequestId, 1\)/);
+  assert.match(conflictHandler, /saveHotspotContext\(''\)/);
+  assert.match(conflictHandler, /showReceiptRecoveryScreen\(sheet, error\.message\)/);
   assert.match(app, /Do not pay again/);
   assert.match(app, /Connect with M-Pesa receipt/);
   const recovery = app.slice(app.indexOf('function showReceiptRecoveryScreen'), app.indexOf('function showSuccessScreen'));

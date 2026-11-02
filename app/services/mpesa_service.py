@@ -272,9 +272,41 @@ class MpesaService:
                 checkout_request_id,
             )
         except Exception as exc:
+            response = getattr(exc, "response", None)
+            http_status = getattr(response, "status_code", None)
+            provider_code = None
+            # Only log allowlisted, bounded diagnostic fields. Never log the
+            # response body, exception text, request headers, or checkout ID.
+            try:
+                provider_body = response.json() if response is not None else None
+                if isinstance(provider_body, dict):
+                    # Only a numeric response code is safe to emit. Arbitrary
+                    # provider errorCode/errorMessage strings are not trusted
+                    # diagnostic fields and could echo request data.
+                    candidate = provider_body.get("ResponseCode")
+                    if isinstance(candidate, (str, int)) and re.fullmatch(r"\d{1,8}", str(candidate)):
+                        provider_code = str(candidate)
+            except Exception:
+                pass
+            error_name = type(exc).__name__
+            category = (
+                "http_error" if http_status is not None else
+                "timeout" if "timeout" in error_name.lower() else
+                "provider_unavailable"
+            )
             logger.warning(
-                "M-Pesa provider status verification unavailable: %s",
-                type(exc).__name__,
+                "M-Pesa provider status verification unavailable: category=%s http_status=%s provider_code=%s exception=%s",
+                category,
+                http_status,
+                provider_code or "unknown",
+                error_name,
+                extra={
+                    "event": "mpesa_status_query_unavailable",
+                    "category": category,
+                    "exception_class": error_name,
+                    "http_status": http_status,
+                    "provider_code": provider_code,
+                },
             )
             return None
 
@@ -319,7 +351,13 @@ class MpesaService:
                 "settled": {"$ne": True},
                 "settlement_review_required": {"$ne": True},
                 "$or": [
-                    {"settlement_status": {"$ne": "processing"}},
+                    {
+                        "settlement_status": {"$ne": "processing"},
+                        "$or": [
+                            {"settlement_retry_after": {"$exists": False}},
+                            {"settlement_retry_after": {"$lte": now}},
+                        ],
+                    },
                     {
                         "settlement_status": "processing",
                         "settlement_started_at": {"$lte": now - timedelta(minutes=5)},
@@ -370,6 +408,7 @@ class MpesaService:
                         "settled": False,
                         "settlement_status": "failed",
                         "settlement_error": safe_error,
+                        "settlement_retry_after": datetime.now(timezone.utc) + timedelta(seconds=15),
                         "updated_at": datetime.now(timezone.utc),
                     }
                 },
@@ -383,7 +422,8 @@ class MpesaService:
                         "settlement_status": "completed",
                         "settlement_error": None,
                         "updated_at": datetime.now(timezone.utc),
-                    }
+                    },
+                    "$unset": {"settlement_retry_after": ""},
                 },
             )
 
@@ -795,39 +835,68 @@ class MpesaService:
         """On successful payment: generate ONE active voucher from the
         purchased plan and attach its code to the transaction so the
         captive portal's status-poll endpoint can hand it back."""
+        if not self._normalize_receipt(mpesa_receipt):
+            raise ConflictError("A verified M-Pesa receipt is required before issuing HotSpot access")
+        from app.models.notification import NotificationType
+        from app.services.notification_service import NotificationService
+        from app.services.voucher_service import VoucherService
+
+        plan_id = doc.get("hotspot_plan_id")
+        voucher_service = VoucherService(self.db)
+        voucher = await voucher_service.create_hotspot_purchase_voucher(
+            purchase_transaction_id=tx_id,
+            plan_id=plan_id,
+            device_mac=doc.get("device_mac", ""),
+            device_type=doc.get("device_type", ""),
+            site_id=doc.get("site_id") if "site_id" in doc else VoucherService.USE_PLAN_SITE,
+            router_id=doc.get("router_id"),
+            access_code=self._normalize_receipt(mpesa_receipt),
+        )
+        voucher_code = voucher["voucher_code"]
+
+        # Voucher creation is a critical settlement effect; notifications are
+        # not. Keep the transaction claimed until the outer settlement method
+        # commits the completed state, and never let an alert failure reverse
+        # an already-issued paid voucher.
+        result = await self.collection.update_one(
+            {"_id": ObjectId(tx_id), "status": MpesaTransactionStatus.SUCCESS.value},
+            {"$set": {"voucher_code": voucher_code, "updated_at": datetime.now(timezone.utc)}},
+        )
+        if getattr(result, "matched_count", 1) == 0:
+            raise ConflictError("Confirmed HotSpot payment changed during voucher settlement")
+
         try:
-            if not self._normalize_receipt(mpesa_receipt):
-                raise ConflictError("A verified M-Pesa receipt is required before issuing HotSpot access")
-            from app.models.notification import NotificationType
-            from app.services.notification_service import NotificationService
-            from app.services.voucher_service import VoucherService
-
-            plan_id = doc.get("hotspot_plan_id")
-            voucher_service = VoucherService(self.db)
-            voucher = await voucher_service.create_hotspot_purchase_voucher(
-                purchase_transaction_id=tx_id,
-                plan_id=plan_id,
-                device_mac=doc.get("device_mac", ""),
-                device_type=doc.get("device_type", ""),
-                site_id=doc.get("site_id") if "site_id" in doc else VoucherService.USE_PLAN_SITE,
-                router_id=doc.get("router_id"),
-                access_code=self._normalize_receipt(mpesa_receipt),
-            )
-            voucher_code = voucher["voucher_code"]
-
-            await self.collection.update_one(
-                {"_id": ObjectId(tx_id)},
-                {"$set": {"voucher_code": voucher_code, "settled": True, "updated_at": datetime.now(timezone.utc)}},
-            )
-
             await NotificationService(self.db).notify(
                 subject="HotSpot voucher purchased",
                 body=f"Thank you for your confirmed payment of KES {amount:,.2f}. Your M-Pesa receipt is {voucher_code}; use it as your WiFi access token. Enjoy your connection!",
                 phone=phone_number, notification_type=NotificationType.VOUCHER_PURCHASED,
             )
-            logger.info("HotSpot purchase settled: transaction=%s", tx_id)
-        except Exception:
-            raise
+        except Exception as exc:
+            logger.warning(
+                "HotSpot purchase notification failed after voucher creation",
+                extra={"event": "hotspot_purchase_notification_failed", "exception_class": type(exc).__name__},
+            )
+        logger.info("HotSpot purchase voucher created; settlement completion follows", extra={"event": "hotspot_purchase_voucher_created"})
+
+    async def get_hotspot_purchase_status(self, checkout_request_id: str) -> MpesaTransactionInDB:
+        """Read checkout state and retry due settlement for callback-confirmed payments.
+
+        This path deliberately does not query Daraja on each browser poll. Only
+        a callback already verified by the provider can trigger settlement.
+        """
+        doc = await self.collection.find_one({"checkout_request_id": checkout_request_id})
+        if not doc:
+            raise NotFoundError("Transaction not found")
+        if (
+            doc.get("transaction_type") == "hotspot_purchase"
+            and doc.get("callback_received") is True
+            and doc.get("status") == MpesaTransactionStatus.SUCCESS.value
+            and doc.get("settled") is not True
+            and doc.get("settlement_review_required") is not True
+        ):
+            return await self._settle_verified_success(doc)
+        doc["_id"] = str(doc["_id"])
+        return MpesaTransactionInDB(**doc)
 
     # ── QUERY & RECONCILIATION ──
 
@@ -885,7 +954,13 @@ class MpesaService:
                     "settled": {"$ne": True},
                     "settlement_review_required": {"$ne": True},
                     "$or": [
-                        {"settlement_status": {"$ne": "processing"}},
+                        {
+                            "settlement_status": {"$ne": "processing"},
+                            "$or": [
+                                {"settlement_retry_after": {"$exists": False}},
+                                {"settlement_retry_after": {"$lte": datetime.now(timezone.utc)}},
+                            ],
+                        },
                         {
                             "settlement_status": "processing",
                             "settlement_started_at": {"$lte": lease_cutoff},
@@ -904,7 +979,14 @@ class MpesaService:
                 tx = await self.query_stk_status(checkout_id)
                 updated.append(tx)
             except Exception as exc:
-                logger.error(f"Reconciliation failed for {checkout_id}: {exc}")
+                logger.error(
+                    "M-Pesa reconciliation attempt failed",
+                    extra={
+                        "event": "mpesa_reconciliation_failed",
+                        "exception_class": type(exc).__name__,
+                        "checkout_request_id_present": bool(checkout_id),
+                    },
+                )
         return updated
 
     # ── READ OPERATIONS ──
