@@ -17,6 +17,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        # Pydantic otherwise includes rejected input values in validation
+        # errors. Settings include production secrets, so errors must not
+        # echo environment values into Render startup logs.
+        hide_input_in_errors=True,
     )
 
     # Application
@@ -139,6 +143,12 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_secrets(self):
         env_name = (self.app_env or "development").lower()
+        # Render is a hosted production boundary. A dashboard override to
+        # "development" previously enabled wildcard Host validation and dev
+        # CORS rules; fail startup rather than run the public service that way.
+        if os.getenv("RENDER_EXTERNAL_HOSTNAME") and env_name in {"development", "dev", "test"}:
+            raise ValueError("APP_ENV must be production on Render; development mode is not allowed on a public service")
+
         if env_name not in {"production", "prod"}:
             return self
 

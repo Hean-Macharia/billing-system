@@ -3,6 +3,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, status
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_request_validation_exception_handler
@@ -56,11 +57,19 @@ class SecurityHeadersMiddleware:
                 extra_headers = [
                     (b"x-frame-options", b"DENY"),
                     (b"x-content-type-options", b"nosniff"),
-                    (b"x-xss-protection", b"1; mode=block"),
                     (b"referrer-policy", b"strict-origin-when-cross-origin"),
                     (b"permissions-policy", b"geolocation=(), microphone=(), camera=()"),
+                    (b"x-permitted-cross-domain-policies", b"none"),
                     (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
                 ]
+                if scope.get("path", "").startswith("/api/"):
+                    # API responses can contain account, billing, voucher, or
+                    # trusted-device data. Prevent browsers and intermediaries
+                    # from reusing those responses from a shared cache.
+                    extra_headers.extend([
+                        (b"cache-control", b"no-store"),
+                        (b"pragma", b"no-cache"),
+                    ])
                 path = scope.get("path", "")
                 if not path.startswith(("/admin/", "/portal/", "/hotspot/")):
                     extra_headers.append((
@@ -165,6 +174,19 @@ def create_app() -> FastAPI:
             for host in ("localhost", "127.0.0.1")
             for port in (5500, 5501, 5502)
         )
+    else:
+        # Same-origin production frontends need no CORS permission. Keep only
+        # explicitly configured HTTPS origins; discard wildcard, localhost,
+        # and plain-HTTP development defaults.
+        cors_origins = [
+            origin for origin in cors_origins
+            if isinstance(origin, str)
+            and urlsplit(origin).scheme == "https"
+            and bool(urlsplit(origin).netloc)
+            and urlsplit(origin).path in {"", "/"}
+            and not urlsplit(origin).query
+            and not urlsplit(origin).fragment
+        ]
 
     app = FastAPI(
         title=settings.app_name,
@@ -193,7 +215,14 @@ def create_app() -> FastAPI:
         ),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=[
+            "Accept",
+            "Authorization",
+            "Content-Type",
+            "X-Correlation-ID",
+            "X-Hotspot-Context",
+            "X-Refresh-Token",
+        ],
         expose_headers=["x-request-id"],
     )
     app.add_middleware(
