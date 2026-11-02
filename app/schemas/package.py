@@ -4,8 +4,9 @@ from pydantic import BaseModel, Field
 class PackageCreate(BaseModel):
     name: str
     package_type: str = "home"
-    download_speed: int = Field(gt=0)
-    upload_speed: int = Field(gt=0)
+    # Speed limits are optional for packages that inherit a MikroTik profile.
+    download_speed: int | None = Field(default=None, gt=0)
+    upload_speed: int | None = Field(default=None, gt=0)
     price: float = Field(gt=0)
     validity_days: int = Field(gt=0)
     mikrotik_profile: str | None = None

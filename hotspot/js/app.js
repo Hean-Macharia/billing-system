@@ -85,6 +85,20 @@ function getDefaultApiBase() {
       return `${hours} Hours`;
     }
 
+    function formatSpeed(plan) {
+      const rate = String(plan?.rate_limit || '').trim().split(/\s+/)[0];
+      const candidates = rate ? rate.split('/') : [plan?.download_speed, plan?.upload_speed].filter((value) => value != null).map(String);
+      const mbps = candidates.map((value) => {
+        const match = String(value).trim().match(/^(\d+(?:\.\d+)?)\s*([kmg]?)$/i);
+        if (!match) return NaN;
+        const scale = { k: 0.001, m: 1, g: 1000 }[match[2].toLowerCase()] || 1;
+        return Number(match[1]) * scale;
+      }).filter((value) => Number.isFinite(value) && value > 0);
+      if (!mbps.length) return '';
+      const max = Math.max(...mbps);
+      return `Up to ${Number(max.toFixed(3))} Mbps`;
+    }
+
     const api = PortalApiRequest.createApiRequest(() => API_BASE_URL);
 
     let deviceAttestationRequest = null;
@@ -104,12 +118,10 @@ function getDefaultApiBase() {
       const status = document.getElementById('device-identification-status');
       if (!CLIENT_IP || !CLIENT_MAC) {
         saveHotspotContext('');
-        status.textContent = 'Secure device verification is unavailable because MikroTik did not provide both device identifiers. Reconnect to the DevZen Wi-Fi sign-in page. Packages may be visible, but purchases require successful verification.';
-        status.dataset.state = 'failed';
+        if (status) { status.textContent = ''; status.hidden = true; }
         return '';
       }
-      status.textContent = 'Verifying this device with the DevZen billing service…';
-      status.dataset.state = 'verifying';
+      if (status) { status.textContent = ''; status.hidden = true; }
       try {
         const result = await api('/api/v1/hotspot/devices/attest', {
           method: 'POST',
@@ -120,13 +132,11 @@ function getDefaultApiBase() {
         });
         const token = PortalApiRequest.getTrustedContextToken(result);
         saveHotspotContext(token);
-        status.textContent = 'Device verified. Packages available for this Wi-Fi site are being loaded.';
-        status.dataset.state = 'verified';
+        if (status) status.hidden = true;
         return token;
       } catch (error) {
         saveHotspotContext('');
-        status.textContent = `Device verification could not be completed: ${error.message}. Purchases remain unavailable until secure verification succeeds.`;
-        status.dataset.state = 'failed';
+        if (status) { status.textContent = ''; status.hidden = true; }
         return '';
       }
     }
@@ -408,7 +418,7 @@ function getDefaultApiBase() {
         listEl.innerHTML = plans.map((plan, index) => {
           const title = plan.name || plan.description || 'Internet bundle';
           const duration = fmtDuration(Number(plan.duration_hours || 1));
-          const rate = plan.rate_limit || 'Speed not specified';
+          const rate = formatSpeed(plan);
           const devices = plan.max_devices || 1;
           const price = new Intl.NumberFormat('en-KE', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(plan.price || 0));
           const badge = ['HOT_DEAL', 'LIMITED'].includes(String(plan.badge || '').toUpperCase())
@@ -425,7 +435,7 @@ function getDefaultApiBase() {
               <div class="plan-body">
                 <div class="plan-description">${escapeHtml(plan.description || formatDataAllowance(plan))}</div>
                 <div class="sub">${escapeHtml(formatDataAllowance(plan))}</div>
-                <div class="sub">${escapeHtml(rate)}</div>
+                ${rate ? `<div class="sub plan-speed">${escapeHtml(rate)}</div>` : ''}
                 <div class="plan-footer">
                   <div class="plan-price">${escapeHtml(plan.currency || 'KES')} ${price}</div>
                   <span class="plan-btn">View package →</span>
@@ -487,20 +497,13 @@ function getDefaultApiBase() {
             <button class="sheet-close" type="button" aria-label="Close">×</button>
           </div>
           <div class="sheet-body">
-            <div class="pay-hero">
-              <div class="mini-pic">${Icons.wifi}</div>
-              <div>
+            <div class="pay-plan-summary">
+              <div class="pay-plan-copy">
                 <strong>${escapeHtml(plan.name || plan.description || 'Internet bundle')}</strong>
-                <span>${escapeHtml(fmtDuration(Number(plan.duration_hours || 1)))}</span>
+                <span>${escapeHtml(fmtDuration(Number(plan.duration_hours || 1)))} · Up to ${devices} device${devices === 1 ? '' : 's'}</span>
+                <small>${escapeHtml(formatDataAllowance(plan))}${formatSpeed(plan) ? ` · ${escapeHtml(formatSpeed(plan))}` : ''}</small>
               </div>
-            </div>
-            <div class="price-box"><span>Data allowance</span><strong>${escapeHtml(formatDataAllowance(plan))}</strong></div>
-            <div class="price-box"><span>Devices supported</span><strong>Up to ${devices}</strong></div>
-            <div class="price-box"><span>Speed</span><strong>${escapeHtml(plan.rate_limit || 'Standard hotspot speed')}</strong></div>
-            ${plan.description ? `<p>${escapeHtml(plan.description)}</p>` : ''}
-            <div class="price-box">
-              <span>You are paying for:</span>
-              <strong>${escapeHtml(plan.currency || 'KES')} ${price}</strong>
+              <strong class="pay-plan-price">${escapeHtml(plan.currency || 'KES')} ${price}</strong>
             </div>
             <form id="buy-form">
               <label>Purchase for</label>
@@ -509,7 +512,7 @@ function getDefaultApiBase() {
                 <button class="device-choice" type="button" data-device-type="tv" aria-pressed="false"><span aria-hidden="true">📺</span><strong>TV</strong><i aria-hidden="true">•</i></button>
                 <button class="device-choice" type="button" data-device-type="other" aria-pressed="false"><span aria-hidden="true">💻</span><strong>Other device</strong><i aria-hidden="true">•</i></button>
               </div>
-              <p class="hint" id="device-selection-help">This device is verified by the WiFi router.</p>
+              <p class="hint" id="device-selection-help"></p>
               <div id="target-device-fields" hidden>
                 <label for="target-device-mac">Target device MAC address</label>
                 <input type="text" id="target-device-mac" inputmode="text" autocomplete="off" placeholder="AA:BB:CC:DD:EE:FF" maxlength="17" aria-describedby="target-device-help" />
@@ -517,7 +520,6 @@ function getDefaultApiBase() {
                 <input type="text" id="target-device-ip" inputmode="decimal" autocomplete="off" placeholder="192.168.89.120" />
                 <p class="hint" id="target-device-help">The target device must be connected to this WiFi. Find its MAC in the device network settings; the router verifies it before payment starts.</p>
               </div>
-              <div id="device-status" class="device-status" role="status" aria-live="polite"></div>
               <label for="phone-input">M-Pesa phone number</label>
               <input type="tel" id="phone-input" inputmode="tel" autocomplete="tel" placeholder="0791196121" required />
               <div class="hint">The M-Pesa prompt will be sent to this phone.</div>
@@ -555,18 +557,11 @@ function getDefaultApiBase() {
           targetFields.hidden = isCurrentDevice;
           targetMacInput.required = !isCurrentDevice;
           selectionHelp.textContent = isCurrentDevice
-            ? 'This device is verified by the WiFi router.'
-            : 'Enter the target device MAC. It must be connected to this WiFi so the router can verify it before payment.';
+            ? ''
+            : 'Enter the target device MAC. The router must verify it before payment.';
           if (!isCurrentDevice) targetMacInput.focus();
         });
       });
-      const deviceStatus = overlay.querySelector('#device-status');
-      deviceStatus.dataset.verified = verifiedMac ? 'true' : 'false';
-      deviceStatus.dataset.state = verifiedMac ? 'verified' : 'failed';
-      deviceStatus.textContent = verifiedMac
-        ? 'This device passed trusted router verification. The backend will verify it again before payment.'
-        : 'Secure device verification is required. Reopen the MikroTik Wi-Fi sign-in page and wait for verification to complete.';
-
       overlay.querySelector('#buy-form').addEventListener('submit', async (event) => {
         event.preventDefault();
         const phoneInput = document.getElementById('phone-input');
@@ -574,8 +569,8 @@ function getDefaultApiBase() {
         const submitBtn = document.getElementById('buy-submit');
         errBox.style.display = 'none';
 
-        if (!readHotspotContext() || !verifiedMac || deviceStatus.dataset.verified !== 'true') {
-          errBox.textContent = 'Secure router verification is required before payment. Reopen the Wi-Fi sign-in page and retry verification.';
+        if (!readHotspotContext() || !verifiedMac) {
+          errBox.textContent = 'Checkout is unavailable for this Wi-Fi session. Reopen the Wi-Fi sign-in page and try again.';
           errBox.style.display = 'block';
           return;
         }
