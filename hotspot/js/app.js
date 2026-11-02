@@ -498,6 +498,7 @@ function getDefaultApiBase() {
           </div>
           <div class="sheet-body">
             <div class="pay-plan-summary">
+              ${['HOT_DEAL', 'LIMITED'].includes(String(plan.badge || '').toUpperCase()) ? `<span class="pay-plan-badge ${String(plan.badge).toUpperCase() === 'HOT_DEAL' ? 'hot-deal' : 'limited'}">${String(plan.badge).toUpperCase() === 'HOT_DEAL' ? 'HOT DEAL' : 'LIMITED'}</span>` : ''}
               <div class="pay-plan-copy">
                 <strong>${escapeHtml(plan.name || plan.description || 'Internet bundle')}</strong>
                 <span>${escapeHtml(fmtDuration(Number(plan.duration_hours || 1)))} · Up to ${devices} device${devices === 1 ? '' : 's'}</span>
@@ -512,7 +513,7 @@ function getDefaultApiBase() {
                 <button class="device-choice" type="button" data-device-type="tv" aria-pressed="false"><span aria-hidden="true">📺</span><strong>TV</strong><i aria-hidden="true">•</i></button>
                 <button class="device-choice" type="button" data-device-type="other" aria-pressed="false"><span aria-hidden="true">💻</span><strong>Other device</strong><i aria-hidden="true">•</i></button>
               </div>
-              <p class="hint" id="device-selection-help"></p>
+              <p class="hint" id="device-selection-help" hidden></p>
               <div id="target-device-fields" hidden>
                 <label for="target-device-mac">Target device MAC address</label>
                 <input type="text" id="target-device-mac" inputmode="text" autocomplete="off" placeholder="AA:BB:CC:DD:EE:FF" maxlength="17" aria-describedby="target-device-help" />
@@ -520,11 +521,10 @@ function getDefaultApiBase() {
                 <input type="text" id="target-device-ip" inputmode="decimal" autocomplete="off" placeholder="192.168.89.120" />
                 <p class="hint" id="target-device-help">The target device must be connected to this WiFi. Find its MAC in the device network settings; the router verifies it before payment starts.</p>
               </div>
-              <label for="phone-input">M-Pesa phone number</label>
+              <label for="phone-input">Enter M-Pesa number to pay ${escapeHtml(plan.currency || 'KES')} ${price}</label>
               <input type="tel" id="phone-input" inputmode="tel" autocomplete="tel" placeholder="0791196121" required />
-              <div class="hint">The M-Pesa prompt will be sent to this phone.</div>
               <div class="error-text" id="buy-error"></div>
-              <button type="submit" class="btn btn-primary" id="buy-submit">Complete payment · ${escapeHtml(plan.currency || 'KES')} ${price}</button>
+              <button type="submit" class="btn btn-primary" id="buy-submit">Pay Now</button>
               <button type="button" class="btn btn-ghost" id="cancel-btn">Cancel</button>
             </form>
           </div>
@@ -559,6 +559,7 @@ function getDefaultApiBase() {
           selectionHelp.textContent = isCurrentDevice
             ? ''
             : 'Enter the target device MAC. The router must verify it before payment.';
+          selectionHelp.hidden = isCurrentDevice;
           if (!isCurrentDevice) targetMacInput.focus();
         });
       });
@@ -571,12 +572,6 @@ function getDefaultApiBase() {
 
         if (!readHotspotContext() || !verifiedMac) {
           errBox.textContent = 'Checkout is unavailable for this Wi-Fi session. Reopen the Wi-Fi sign-in page and try again.';
-          errBox.style.display = 'block';
-          return;
-        }
-
-        if (!readHotspotContext()) {
-          errBox.textContent = 'Secure router verification is required before payment. Reconnect to the WiFi sign-in page and retry device verification.';
           errBox.style.display = 'block';
           return;
         }
