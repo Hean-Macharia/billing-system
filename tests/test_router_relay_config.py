@@ -36,3 +36,18 @@ def test_vps_relay_requires_valid_url_and_token():
             ROUTER_RELAY_URL="not-a-url",
             ROUTER_RELAY_TOKEN="",
         )
+
+
+def test_staging_environment_requires_production_grade_secrets_without_loading_dotenv():
+    with pytest.raises(ValueError, match="Production and staging modes require strong"):
+        Settings(_env_file=None, APP_ENV="staging")
+
+    cfg = Settings(
+        _env_file=None,
+        APP_ENV="staging",
+        JWT_SECRET_KEY="a" * 64,
+        RADIUS_SECRET="b" * 64,
+        RADIUS_API_SECRET="c" * 64,
+        ROUTER_ENCRYPTION_KEY="d" * 64,
+    )
+    assert cfg.app_env == "staging"

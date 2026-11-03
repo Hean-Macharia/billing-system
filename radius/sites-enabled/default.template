@@ -30,9 +30,6 @@ server default {
         Auth-Type CHAP {
             chap
         }
-        Auth-Type MS-CHAP {
-            mschap
-        }
     }
 
     accounting {

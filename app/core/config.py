@@ -149,7 +149,7 @@ class Settings(BaseSettings):
         if os.getenv("RENDER_EXTERNAL_HOSTNAME") and env_name in {"development", "dev", "test"}:
             raise ValueError("APP_ENV must be production on Render; development mode is not allowed on a public service")
 
-        if env_name not in {"production", "prod"}:
+        if env_name not in {"production", "prod", "staging", "stage"}:
             return self
 
         required = {
@@ -162,7 +162,7 @@ class Settings(BaseSettings):
         missing = [name for name, value in required.items() if not value or len(value) < 32]
         if missing:
             raise ValueError(
-                "Production mode requires strong non-empty values for: "
+                "Production and staging modes require strong non-empty values for: "
                 + ", ".join(missing)
                 + ". Configure them in your environment variables or .env file."
             )

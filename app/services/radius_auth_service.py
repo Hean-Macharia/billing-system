@@ -325,7 +325,9 @@ class RadiusAuthService:
     def _is_pppoe_request(req: RadiusAuthRequest) -> bool:
         service_type = str(req.Service_Type or "").strip().lower()
         framed_protocol = str(req.Framed_Protocol or "").strip().lower()
-        return service_type in {"framed-user", "2"} or framed_protocol in {"ppp", "1"}
+        # MikroTik documents the PPP service type as "Framed"; FreeRADIUS
+        # may serialize the same enum as its name or numeric value 2.
+        return service_type in {"framed", "framed-user", "2"} or framed_protocol in {"ppp", "1"}
 
     @staticmethod
     def _chap_bytes(value: Optional[str]) -> Optional[bytes]:
@@ -900,7 +902,7 @@ class RadiusAuthService:
     def _is_pppoe_accounting(req: RadiusAccountingRequest) -> bool:
         service_type = str(req.Service_Type or "").strip().lower()
         framed_protocol = str(req.Framed_Protocol or "").strip().lower()
-        return service_type in {"framed-user", "2"} or framed_protocol in {"ppp", "1"}
+        return service_type in {"framed", "framed-user", "2"} or framed_protocol in {"ppp", "1"}
 
     @staticmethod
     def _accounting_session_key(req: RadiusAccountingRequest) -> dict:

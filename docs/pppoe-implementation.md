@@ -58,7 +58,7 @@ Before deploying, verify the production secret manager already contains the encr
 
 ## MongoDB compatibility and indexes
 
-No collection or record migration is required for new subscribers; existing RADIUS username uniqueness is reused. The local code adds two non-unique `subscriptions` indexes for PPPoE expiry scans and site/status listings. It also adds unique compound `(acct_session_id, nas_ip_address)` indexes to both RADIUS accounting collections. This is required because a RADIUS Acct-Session-Id is scoped to a NAS, and a single-field key incorrectly collides across routers. `radius_sessions` currently has a legacy unique single-field Acct-Session-Id index, so a staged index migration is required: inspect duplicates, then replace that old unique index with the compound key. Startup index creation treats these compound uniqueness indexes as critical and fails closed if existing duplicates prevent creation. Do not deploy before this preflight and migration is planned. The existing unique `radius_users.username` index is the username uniqueness guarantee. Confirm it exists before provisioning. No unique index was added to `subscriptions.pppoe_username`, avoiding a migration that could fail on legacy duplicates.
+No collection or record migration is required for new subscribers; existing RADIUS username uniqueness is reused. The local code adds two non-unique `subscriptions` indexes for PPPoE expiry scans and site/status listings. It also adds unique compound `(acct_session_id, nas_ip_address)` indexes to both RADIUS accounting collections. This is required because a RADIUS Acct-Session-Id is scoped to a NAS, and a single-field key incorrectly collides across routers. `radius_sessions` may have a legacy unique single-field Acct-Session-Id index, so a staged index migration is required. These compound indexes are now marked `manual_migration`: application startup verifies their presence and fails closed if either is missing; it never creates them implicitly. See `docs/pppoe-staging-readiness.md` and the guarded scripts under `scripts/`. The existing unique `radius_users.username` index is the username uniqueness guarantee. Confirm it exists before provisioning. No unique index was added to `subscriptions.pppoe_username`, avoiding a migration that could fail on legacy duplicates.
 
 Read-only preflight in `mongosh` (select the configured database first):
 
@@ -75,7 +75,7 @@ db.radius_sessions.getIndexes()
 db.radius_accounting.getIndexes()
 ```
 
-Only after an approved backup and duplicate reconciliation in staging, remove `radius_sessions`' legacy `acct_session_id_1` index and allow the application to build its compound unique index. Do not delete records automatically. Production migration requires separate approval.
+Only after an approved staging backup and a clean duplicate preflight should the explicit migration create both compound indexes and remove the exact legacy `radius_sessions.acct_session_id_1` unique index. Do not delete records automatically. Production migration requires separate approval.
 
 Legacy plaintext credentials in existing `subscriptions.pppoe_password` or RADIUS records are not automatically migrated. Plan a controlled migration and credential rotation if needed. Never print these fields during audit.
 

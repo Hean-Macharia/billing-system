@@ -137,7 +137,14 @@ INDEXES = {
         {"keys": [("customer_id", 1)]},
         # RADIUS Acct-Session-Id is scoped to its NAS; multi-router deployments
         # must permit the same identifier at distinct NAS addresses.
-        {"keys": [("acct_session_id", 1), ("nas_ip_address", 1)], "unique": True, "critical": True},
+        {
+            "keys": [("acct_session_id", 1), ("nas_ip_address", 1)],
+            "unique": True,
+            "critical": True,
+            # This data-sensitive uniqueness change is applied only by the
+            # explicit, duplicate-preflighted migration script.
+            "manual_migration": True,
+        },
     ],
     "audit_logs": [
         {"keys": [("user_id", 1)]},
@@ -203,7 +210,12 @@ INDEXES = {
     "radius_accounting": [
         {"keys": [("acct_session_id", 1)]},
         # Cross-process idempotency for Start/Stop/interim packets.
-        {"keys": [("acct_session_id", 1), ("nas_ip_address", 1)], "unique": True, "critical": True},
+        {
+            "keys": [("acct_session_id", 1), ("nas_ip_address", 1)],
+            "unique": True,
+            "critical": True,
+            "manual_migration": True,
+        },
         {"keys": [("username", 1)]},
         {"keys": [("nas_ip_address", 1)]},
         {"keys": [("site_id", 1), ("acct_start_time", -1)]},
@@ -223,6 +235,7 @@ class Database:
     async def connect(self) -> None:
         """Establish MongoDB connection with pooling."""
         running_loop = asyncio.get_running_loop()
+        using_in_memory_mock = False
 
         if self.client is not None:
             try:
@@ -287,6 +300,7 @@ class Database:
             self.client = AsyncMongoMockClient(settings.mongodb_url)
             self.db = self.client[settings.database_name]
             await self.client.admin.command("ping")
+            using_in_memory_mock = True
         except Exception as e:
             if not use_mock_db:
                 logger.critical(f"MongoDB connection failed: {e}")
@@ -295,9 +309,10 @@ class Database:
             self.client = AsyncMongoMockClient(settings.mongodb_url)
             self.db = self.client[settings.database_name]
             await self.client.admin.command("ping")
+            using_in_memory_mock = True
 
         # Create indexes
-        await self._create_indexes()
+        await self._create_indexes(allow_manual_migration=using_in_memory_mock)
 
     async def disconnect(self) -> None:
         """Close MongoDB connection."""
@@ -321,15 +336,53 @@ class Database:
         except Exception:
             return False
 
-    async def _create_indexes(self) -> None:
+    async def _create_indexes(self, *, allow_manual_migration: bool = False) -> None:
         """Create all collection indexes upfront."""
+        # Never create data-sensitive compound unique indexes as an implicit
+        # side effect of web-worker startup. These two indexes require a
+        # read-only duplicate preflight and the explicit migration script.
+        for collection_name, indexes in INDEXES.items():
+            for index in indexes:
+                if not index.get("manual_migration"):
+                    continue
+                information = await self.db[collection_name].index_information()
+                target_keys = list(index["keys"])
+                matching = [
+                    item for item in information.values()
+                    if list(
+                        item.get("key", {}).items()
+                        if isinstance(item.get("key", {}), dict)
+                        else item.get("key", [])
+                    ) == target_keys
+                    and item.get("unique") is True
+                ]
+                if not matching and allow_manual_migration:
+                    # In-memory mock databases are disposable test fixtures;
+                    # they have no legacy data and are not a migration target.
+                    options = {
+                        name: value for name, value in index.items()
+                        if name not in {"keys", "critical", "manual_migration"}
+                    }
+                    await self.db[collection_name].create_index(index["keys"], **options)
+                    continue
+                if not matching:
+                    raise RuntimeError(
+                        "Required manually migrated unique index is missing for "
+                        f"{collection_name}; run the reviewed staging preflight/migration first"
+                    )
+
         for collection_name, indexes in INDEXES.items():
             collection = self.db[collection_name]
             for index in indexes:
+                if index.get("manual_migration"):
+                    continue
                 try:
                     keys = index["keys"]
                     critical = bool(index.get("critical"))
-                    options = {name: value for name, value in index.items() if name not in {"keys", "critical"}}
+                    options = {
+                        name: value for name, value in index.items()
+                        if name not in {"keys", "critical", "manual_migration"}
+                    }
                     await collection.create_index(keys, **options)
                 except Exception as e:
                     if critical:
@@ -338,9 +391,7 @@ class Database:
                             collection_name,
                             type(e).__name__,
                         )
-                        logger.critical(
-                            "Required HotSpot payment uniqueness index could not be established; startup must fail closed"
-                        )
+                        logger.critical("Required unique index could not be established; startup must fail closed")
                         raise
                     logger.warning(
                         "Index creation warning for %s (%s)",

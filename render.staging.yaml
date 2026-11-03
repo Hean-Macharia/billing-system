@@ -1,0 +1,61 @@
+# Separate staging Blueprint. Review in Render before creating a service.
+# It is not referenced by render.yaml and has not been deployed.
+services:
+  - type: web
+    name: devzen-creations-staging
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/ready
+    autoDeploy: false
+    numInstances: 1
+    envVars:
+      - key: APP_NAME
+        value: DEVZEN CREATIONS STAGING
+      - key: APP_ENV
+        value: staging
+      - key: DEBUG
+        value: "false"
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: DATABASE_NAME
+        value: devzen_isp_billing_staging
+      - key: MONGODB_URL
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: RADIUS_SECRET
+        sync: false
+      - key: RADIUS_API_SECRET
+        sync: false
+      - key: ROUTER_ENCRYPTION_KEY
+        sync: false
+      - key: ROUTER_CONNECTION_MODE
+        value: vps_relay
+      - key: ROUTER_RELAY_URL
+        sync: false
+      - key: ROUTER_RELAY_TOKEN
+        sync: false
+      - key: ROUTER_HOST
+        sync: false
+      - key: ROUTER_PORT
+        value: "8728"
+      - key: ROUTER_USERNAME
+        sync: false
+      - key: ROUTER_PASSWORD
+        sync: false
+      - key: MPESA_ENVIRONMENT
+        value: sandbox
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_CALLBACK_URL
+        sync: false

@@ -175,6 +175,32 @@ async def test_pppoe_rejects_hotspot_voucher_namespace(db):
 
 
 @pytest.mark.asyncio
+async def test_routeros_framed_service_type_never_falls_back_to_hotspot_voucher(db):
+    await db.vouchers.insert_one({"voucher_code": "voucher-as-user", "status": "active"})
+    framed_request = RadiusAuthRequest.model_validate({
+        "User-Name": "voucher-as-user",
+        "User-Password": "voucher-as-user",
+        "Service-Type": "Framed",
+    })
+
+    response = await RadiusAuthService(db).authenticate(framed_request)
+
+    assert response.control_Auth_Type == "Reject"
+
+
+def test_routeros_framed_enum_is_classified_as_pppoe_for_auth_and_accounting():
+    from app.services.radius_auth_service import RadiusAuthService
+
+    auth_request = RadiusAuthRequest.model_validate({"Service-Type": "Framed"})
+    accounting_request = RadiusAccountingRequest.model_validate({
+        "Acct-Status-Type": "Start", "Acct-Session-Id": "stage-framed", "Service-Type": "Framed",
+    })
+
+    assert RadiusAuthService._is_pppoe_request(auth_request) is True
+    assert RadiusAuthService._is_pppoe_accounting(accounting_request) is True
+
+
+@pytest.mark.asyncio
 async def test_pppoe_chap_response_is_verified_against_server_credential(db):
     site, router, nas, plan, sub = await seed_network(db)
     await seed_radius_user(db, site, router, nas, sub)
