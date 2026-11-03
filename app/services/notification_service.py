@@ -98,7 +98,7 @@ class NotificationService:
             result = await self.collection.insert_one(doc)
         except Exception as exc:  # notification persistence is also best-effort
             logger.warning(
-                "Notification audit persistence failed",
+                "notification_persistence_failed",
                 extra={"event": "notification_persistence_failed", "exception_class": type(exc).__name__},
             )
             # Return the in-memory result so callers can retain the expected

@@ -6,6 +6,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.crypto import encrypt_value
 from app.core.logging import get_logger
 from app.models.subscription import SubscriptionInDB, SubscriptionStatus
 from app.schemas.subscription import SubscriptionCreate, SubscriptionUpdate
@@ -44,6 +45,9 @@ class SubscriptionService:
         next_billing = self._calculate_next_billing(data.start_date, plan_doc.get("billing_cycle", "monthly"))
 
         sub_doc = data.model_dump()
+        if sub_doc.get("pppoe_password"):
+            sub_doc["pppoe_password"] = encrypt_value(sub_doc["pppoe_password"])
+            sub_doc["pppoe_password_encrypted"] = True
         sub_doc["customer_code"] = customer_doc.get("customer_code")
         sub_doc["customer_name"] = customer_doc.get("full_name")
         sub_doc["plan_code"] = plan_doc.get("plan_code")
@@ -98,6 +102,9 @@ class SubscriptionService:
         update_data = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
         if not update_data:
             raise ValidationError("No fields to update")
+        if update_data.get("pppoe_password"):
+            update_data["pppoe_password"] = encrypt_value(update_data["pppoe_password"])
+            update_data["pppoe_password_encrypted"] = True
         update_data["updated_at"] = datetime.now(timezone.utc)
         result = await self.collection.update_one({"_id": ObjectId(sub_id)}, {"$set": update_data})
         if result.matched_count == 0:

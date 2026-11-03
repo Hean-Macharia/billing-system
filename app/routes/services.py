@@ -33,6 +33,7 @@ def _to_response(plan):
         "features": [f.model_dump() for f in plan.features] if plan.features else [],
         "fair_usage_policy": plan.fair_usage_policy,
         "data_cap_gb": plan.data_cap_gb,
+        "available_site_ids": plan.available_site_ids,
         "minimum_contract_months": plan.minimum_contract_months,
         "early_termination_fee_kes": plan.early_termination_fee_kes,
         "grace_period_days": plan.grace_period_days,

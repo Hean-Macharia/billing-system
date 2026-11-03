@@ -633,18 +633,35 @@ class MpesaService:
             # 3. Update subscription to active if exists
             if subscription_id:
                 sub = await self.db.subscriptions.find_one({"_id": ObjectId(subscription_id)})
+                now = datetime.now(timezone.utc)
                 subscription_update = {
                     "$set": {
                         "status": "active",
-                        "last_payment_date": datetime.now(timezone.utc),
-                        "updated_at": datetime.now(timezone.utc),
+                        "last_payment_date": now,
+                        "updated_at": now,
                     },
                     "$addToSet": {"mpesa_settled_transaction_ids": tx_id},
                 }
-                if sub and sub.get("billing_cycle") == "monthly":
-                    subscription_update["$set"]["next_billing_date"] = (
-                        datetime.now(timezone.utc) + timedelta(days=30)
-                    )
+                if sub and sub.get("service_type") == "pppoe":
+                    plan = None
+                    plan_id = sub.get("plan_id") or sub.get("service_id")
+                    if plan_id:
+                        try:
+                            plan = await self.db.service_plans.find_one({"_id": ObjectId(str(plan_id))})
+                        except Exception:
+                            plan = None
+                    cycle = str(sub.get("billing_cycle") or (plan or {}).get("billing_cycle") or "monthly")
+                    days = {"daily": 1, "weekly": 7, "monthly": 30, "quarterly": 90,
+                            "semi_annual": 180, "yearly": 365}.get(cycle, 30)
+                    old_end = sub.get("end_date")
+                    if old_end and old_end.tzinfo is None:
+                        old_end = old_end.replace(tzinfo=timezone.utc)
+                    starts = old_end if old_end and old_end > now else now
+                    new_end = starts + timedelta(days=days)
+                    subscription_update["$set"]["end_date"] = new_end
+                    subscription_update["$set"]["next_billing_date"] = new_end
+                elif sub and sub.get("billing_cycle") == "monthly":
+                    subscription_update["$set"]["next_billing_date"] = now + timedelta(days=30)
                 await self.db.subscriptions.update_one(
                     {
                         "_id": ObjectId(subscription_id),
@@ -652,6 +669,9 @@ class MpesaService:
                     },
                     subscription_update,
                 )
+                if sub and sub.get("service_type") == "pppoe":
+                    from app.services.radius_admin_service import RadiusAdminService
+                    await RadiusAdminService(self.db).sync_user_from_subscription(subscription_id)
 
             # 4. Update customer balance. Does NOT blindly reactivate the
             # customer here - a payment can settle one invoice while

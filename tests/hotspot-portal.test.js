@@ -26,7 +26,7 @@ test('HotSpot checkout uses trusted attestation context rather than ambiguous DH
   assert.match(checkout, /const verifiedContextAvailable = Boolean\(readHotspotContext\(\)\)/);
   assert.match(checkout, /X-Hotspot-Context/);
   assert.doesNotMatch(checkout, /\/api\/v1\/hotspot\/devices\/lookup/);
-  assert.match(checkout, /Secure router verification is required before payment/);
+  assert.match(checkout, /Checkout is unavailable for this Wi-Fi session\. Reopen the Wi-Fi sign-in page and try again\./);
 });
 
 test('HotSpot package verification is single-flight, cancellable, and guards stale results', () => {

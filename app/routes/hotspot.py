@@ -419,7 +419,7 @@ async def purchase_status(
             "voucher_code": tx.voucher_code if settled else None,
             "package_name": tx.account_reference if settled else None,
             "amount": tx.amount if settled else None,
-            "device_type": tx.device_type,
+            "device_type": getattr(tx, "device_type", "this_device"),
             "expires_at": expires_at.isoformat() if expires_at else None,
             "result_desc": tx.result_desc,
         },

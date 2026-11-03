@@ -51,6 +51,8 @@ def _user_to_response(user) -> dict:
         "service_id": user.service_id,
         "subscription_id": user.subscription_id,
         "site_id": user.site_id,
+        "router_id": user.router_id,
+        "nas_client_id": user.nas_client_id,
         "package_id": user.package_id,
         "framed_ip_address": user.framed_ip_address,
         "framed_ip_pool": user.framed_ip_pool,

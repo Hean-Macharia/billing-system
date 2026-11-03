@@ -47,7 +47,12 @@ class Subscription(BaseModel):
     ip_address: Optional[str] = None
     vlan_id: Optional[int] = None
     pppoe_username: Optional[str] = None
-    pppoe_password: Optional[str] = None
+    # Encrypted credentials may expand to more than the 128-char plaintext cap.
+    pppoe_password: Optional[str] = Field(default=None, max_length=512)
+    pppoe_password_encrypted: bool = False
+    site_id: Optional[str] = None
+    router_id: Optional[str] = None
+    nas_client_id: Optional[str] = None
     data_used_gb: float = 0.0
     data_cap_gb: Optional[int] = None
     invoice_ids: List[str] = Field(default_factory=list)

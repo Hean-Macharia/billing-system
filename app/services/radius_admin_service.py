@@ -8,6 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.radius import NasClient, NasType, RadiusUser, RadiusUserType
+from app.core.crypto import encrypt_value
 from app.schemas.radius import NasClientCreate, NasClientUpdate, RadiusUserCreate, RadiusUserUpdate
 
 logger = get_logger(__name__)
@@ -132,6 +133,9 @@ class RadiusAdminService:
             raise ConflictError(f"RADIUS user '{data.username}' already exists")
 
         doc = data.model_dump()
+        if data.user_type == RadiusUserType.PPPOE:
+            doc["password"] = encrypt_value(data.password)
+            doc["password_encrypted"] = True
         doc["status"] = "active"
         doc["total_sessions"] = 0
         doc["total_online_time_sec"] = 0
@@ -191,6 +195,11 @@ class RadiusAdminService:
         update_data = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
         if not update_data:
             raise ValidationError("No fields to update")
+        if "password" in update_data:
+            existing = await self.get_user(user_id)
+            if existing.user_type == RadiusUserType.PPPOE:
+                update_data["password"] = encrypt_value(update_data["password"])
+                update_data["password_encrypted"] = True
         update_data["updated_at"] = datetime.now(timezone.utc)
 
         result = await self.user_collection.update_one(
@@ -206,19 +215,28 @@ class RadiusAdminService:
             raise NotFoundError("RADIUS user not found")
 
     async def sync_user_from_subscription(self, subscription_id: str) -> RadiusUser:
-        """Auto-create/update RADIUS user from an active subscription."""
+        """Sync account status and package after subscription settlement.
+
+        No username/password fallback is allowed: customer phone numbers and
+        magic default passwords must never become network credentials.
+        """
         sub = await self.db.subscriptions.find_one({"_id": ObjectId(subscription_id)})
         if not sub:
             raise NotFoundError("Subscription not found")
 
         customer_id = str(sub["customer_id"]) if isinstance(sub["customer_id"], ObjectId) else sub["customer_id"]
-        package_id = str(sub["package_id"]) if isinstance(sub["package_id"], ObjectId) else sub.get("package_id")
+        package_ref = sub.get("package_id") or sub.get("plan_id") or sub.get("service_id")
+        package_id = str(package_ref) if package_ref is not None else None
         site_id = str(sub["site_id"]) if isinstance(sub.get("site_id"), ObjectId) else sub.get("site_id")
 
         # Get package details for rate limits
         package = None
         if package_id:
-            pkg = await self.db.service_plans.find_one({"_id": ObjectId(package_id)})
+            try:
+                package_filter = {"_id": ObjectId(package_id)}
+            except Exception:
+                package_filter = {"_id": package_id}
+            pkg = await self.db.service_plans.find_one(package_filter)
             if pkg:
                 package = pkg
 
@@ -227,9 +245,11 @@ class RadiusAdminService:
         if not customer:
             raise NotFoundError("Customer not found")
 
-        username = sub.get("pppoe_username") or customer.get("customer_code", "").lower()
+        if sub.get("service_type") not in {"pppoe", "PPPOE", "pppoe_subscription"} and not sub.get("pppoe_username"):
+            raise ValidationError("Subscription is not configured for PPPoE")
+        username = sub.get("pppoe_username")
         if not username:
-            raise ValidationError("Cannot generate username: missing customer_code or pppoe_username")
+            raise ValidationError("PPPoE username is required before RADIUS provisioning")
 
         # Check if user already exists
         existing = await self.get_user_by_username(username)
@@ -239,23 +259,36 @@ class RadiusAdminService:
                 "subscription_id": subscription_id,
                 "package_id": package_id,
                 "site_id": site_id,
-                "status": "active" if sub.get("status") == "active" else sub.get("status"),
+                "router_id": str(sub.get("router_id")) if sub.get("router_id") else None,
+                "nas_client_id": str(sub.get("nas_client_id")) if sub.get("nas_client_id") else None,
+                "status": "active" if sub.get("status") == "active" else sub.get("status", "pending"),
                 "updated_at": datetime.now(timezone.utc),
             }
             if sub.get("pppoe_password"):
-                update["password"] = sub["pppoe_password"]
+                stored = sub["pppoe_password"]
+                update["password"] = stored if sub.get("pppoe_password_encrypted") else encrypt_value(stored)
+                update["password_encrypted"] = True
             if package:
-                update["rate_limit"] = package.get("rate_limit")
-                update["session_timeout"] = package.get("session_timeout")
+                upload = package.get("upload_speed_mbps")
+                download = package.get("download_speed_mbps")
+                update["rate_limit"] = (
+                    f"{int(upload)}M/{int(download)}M"
+                    if upload and download else package.get("rate_limit")
+                )
+                update["data_cap_bytes"] = int(package["data_cap_gb"] * 1024**3) if package.get("data_cap_gb") else None
                 update["framed_ip_pool"] = package.get("framed_ip_pool")
-                update["data_cap_bytes"] = package.get("data_cap_bytes")
             await self.user_collection.update_one(
                 {"_id": ObjectId(existing.id)}, {"$set": update}
             )
             return await self.get_user(existing.id)
 
-        # Create new
-        password = sub.get("pppoe_password") or customer.get("phone", "changeme")
+        # Create only from an explicitly provisioned credential.
+        password = sub.get("pppoe_password")
+        if not password:
+            raise ValidationError("PPPoE credentials must be provisioned before settlement sync")
+        if sub.get("pppoe_password_encrypted"):
+            from app.core.crypto import decrypt_value
+            password = decrypt_value(password)
         create_data = RadiusUserCreate(
             username=username,
             password=password,
@@ -264,8 +297,14 @@ class RadiusAdminService:
             service_id=str(sub.get("service_id")) if sub.get("service_id") else None,
             subscription_id=subscription_id,
             site_id=site_id,
+            router_id=str(sub.get("router_id")) if sub.get("router_id") else None,
+            nas_client_id=str(sub.get("nas_client_id")) if sub.get("nas_client_id") else None,
             package_id=package_id,
-            rate_limit=package.get("rate_limit") if package else None,
+            rate_limit=(
+                f"{int(package['upload_speed_mbps'])}M/{int(package['download_speed_mbps'])}M"
+                if package and package.get("upload_speed_mbps") and package.get("download_speed_mbps")
+                else package.get("rate_limit") if package else None
+            ),
             session_timeout=package.get("session_timeout") if package else None,
             framed_ip_pool=package.get("framed_ip_pool") if package else None,
             data_cap_bytes=package.get("data_cap_bytes") if package else None,

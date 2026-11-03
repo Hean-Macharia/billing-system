@@ -60,6 +60,8 @@ class RadiusUserCreate(BaseModel):
     service_id: Optional[str] = None
     subscription_id: Optional[str] = None
     site_id: Optional[str] = None
+    router_id: Optional[str] = None
+    nas_client_id: Optional[str] = None
     package_id: Optional[str] = None
     framed_ip_address: Optional[str] = None
     framed_ip_pool: Optional[str] = None

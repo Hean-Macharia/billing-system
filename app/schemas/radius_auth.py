@@ -98,6 +98,7 @@ class RadiusAuthResponse(BaseModel):
     reply_Framed_Pool: Optional[str] = Field(default=None, alias="reply:Framed-Pool")
     reply_Acct_Interim_Interval: Optional[int] = Field(default=300, alias="reply:Acct-Interim-Interval")
     reply_Service_Type: Optional[str] = Field(default=None, alias="reply:Service-Type")
+    reply_Framed_Protocol: Optional[str] = Field(default=None, alias="reply:Framed-Protocol")
     reply_Class: Optional[str] = Field(default=None, alias="reply:Class")
     reply_Simultaneous_Use: Optional[int] = Field(default=None, alias="reply:Simultaneous-Use")
     reply_Mikrotik_Recv_Limit: Optional[int] = Field(default=None, alias="reply:Mikrotik-Recv-Limit")

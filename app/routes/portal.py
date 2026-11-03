@@ -17,6 +17,7 @@ from app.core.exceptions import AuthorizationError, ConflictError, NotFoundError
 from app.models.user import UserInDB, UserRole
 from app.schemas.mpesa import StkPushRequest
 from app.schemas.portal import PortalRegisterRequest, PortalStkPushRequest
+from app.schemas.pppoe import PppoePasswordReset
 from app.schemas.ticket import TicketCreate, TicketReply
 from app.services.mpesa_service import MpesaService
 from app.services.portal_service import PortalService
@@ -24,6 +25,12 @@ from app.services.ticket_service import TicketService
 from app.utils.helpers import paginated_response, success_response
 
 router = APIRouter(prefix="/api/v1/portal", tags=["Customer Portal"])
+
+
+def _customer_reference_query(customer: dict) -> dict:
+    """Match legacy ObjectId refs and current string refs for this customer only."""
+    oid = customer["_id"]
+    return {"$in": [oid, str(oid)]}
 
 
 async def get_current_customer(
@@ -72,14 +79,51 @@ async def portal_dashboard(customer: dict = Depends(get_current_customer), db: A
 @router.get("/subscriptions", response_model=dict)
 async def portal_subscriptions(customer: dict = Depends(get_current_customer), db: AsyncIOMotorDatabase = Depends(get_db)):
     subs = []
-    async for doc in db.subscriptions.find({"customer_id": customer["_id"]}).sort("created_at", -1):
+    async for doc in db.subscriptions.find({"customer_id": _customer_reference_query(customer)}).sort("created_at", -1):
         plan = await db.service_plans.find_one({"_id": ObjectId(doc["plan_id"])}) if doc.get("plan_id") else None
-        doc["_id"] = str(doc["_id"])
-        doc["plan_name"] = plan.get("name") if plan else None
-        doc["plan_download_speed_mbps"] = plan.get("download_speed_mbps") if plan else None
-        doc["plan_upload_speed_mbps"] = plan.get("upload_speed_mbps") if plan else None
-        subs.append(doc)
+        # Build an explicit customer-safe response. In particular, never
+        # serialize the legacy pppoe_password field (older records may still
+        # contain credentials there).
+        subs.append({
+            "_id": str(doc["_id"]),
+            "customer_id": str(doc.get("customer_id") or ""),
+            "plan_id": str(doc.get("plan_id") or ""),
+            "plan_name": plan.get("name") if plan else doc.get("plan_name"),
+            "status": doc.get("status"),
+            "start_date": doc.get("start_date"),
+            "end_date": doc.get("end_date"),
+            "next_billing_date": doc.get("next_billing_date"),
+            "monthly_price_kes": doc.get("monthly_price_kes"),
+            "pppoe_username": doc.get("pppoe_username"),
+            "service_type": doc.get("service_type"),
+            "site_id": str(doc.get("site_id")) if doc.get("site_id") else None,
+            "plan_download_speed_mbps": plan.get("download_speed_mbps") if plan else None,
+            "plan_upload_speed_mbps": plan.get("upload_speed_mbps") if plan else None,
+        })
     return success_response(message="Subscriptions retrieved", data=subs)
+
+
+@router.post("/pppoe/subscriptions/{subscription_id}/reset-password", response_model=dict)
+async def portal_reset_pppoe_password(
+    subscription_id: str,
+    data: PppoePasswordReset,
+    customer: dict = Depends(get_current_customer),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    try:
+        subscription_oid = ObjectId(subscription_id)
+    except Exception as exc:
+        raise NotFoundError("PPPoE subscription not found") from exc
+    owned = await db.subscriptions.find_one({
+        "_id": subscription_oid,
+        "customer_id": _customer_reference_query(customer),
+        "service_type": "pppoe",
+    }, {"_id": 1})
+    if not owned:
+        raise NotFoundError("PPPoE subscription not found")
+    from app.services.pppoe_service import PppoeService
+    await PppoeService(db).reset_password(subscription_id, data.password)
+    return success_response(message="PPPoE password changed. It was not returned by the API.")
 
 
 # ==================================================================== #
@@ -116,7 +160,7 @@ async def portal_invoices(
     status_filter: str | None = None, page: int = 1, limit: int = 20,
     customer: dict = Depends(get_current_customer), db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    query = {"customer_id": customer["_id"]}
+    query = {"customer_id": _customer_reference_query(customer)}
     if status_filter:
         query["status"] = status_filter
     skip = (page - 1) * limit
@@ -135,7 +179,7 @@ async def portal_get_invoice(invoice_id: str, customer: dict = Depends(get_curre
         oid = ObjectId(invoice_id)
     except Exception as exc:
         raise NotFoundError("Invoice not found") from exc
-    doc = await db.invoices.find_one({"_id": oid, "customer_id": customer["_id"]})
+    doc = await db.invoices.find_one({"_id": oid, "customer_id": _customer_reference_query(customer)})
     if not doc:
         raise NotFoundError("Invoice not found")
     doc["_id"] = str(doc["_id"])
@@ -148,7 +192,7 @@ async def portal_get_invoice(invoice_id: str, customer: dict = Depends(get_curre
 
 @router.get("/payments", response_model=dict)
 async def portal_payments(page: int = 1, limit: int = 20, customer: dict = Depends(get_current_customer), db: AsyncIOMotorDatabase = Depends(get_db)):
-    query = {"customer_id": customer["_id"]}
+    query = {"customer_id": _customer_reference_query(customer)}
     skip = (page - 1) * limit
     total = await db.payments.count_documents(query)
     cursor = db.payments.find(query).skip(skip).limit(limit).sort("created_at", -1)
@@ -171,7 +215,7 @@ async def portal_stk_push(
         oid = ObjectId(data.invoice_id)
     except Exception as exc:
         raise NotFoundError("Invoice not found") from exc
-    invoice = await db.invoices.find_one({"_id": oid, "customer_id": customer["_id"]})
+    invoice = await db.invoices.find_one({"_id": oid, "customer_id": _customer_reference_query(customer)})
     if not invoice:
         raise NotFoundError("Invoice not found")
     if invoice.get("status") == "paid":
@@ -243,7 +287,7 @@ async def portal_payment_receipt(payment_id: str, customer: dict = Depends(get_c
         oid = ObjectId(payment_id)
     except Exception as exc:
         raise NotFoundError("Payment not found") from exc
-    payment = await db.payments.find_one({"_id": oid, "customer_id": customer["_id"]})
+    payment = await db.payments.find_one({"_id": oid, "customer_id": _customer_reference_query(customer)})
     if not payment:
         raise NotFoundError("Payment not found")
     if payment.get("status") != "completed":

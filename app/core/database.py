@@ -62,6 +62,9 @@ INDEXES = {
         {"keys": [("service_id", 1)]},
         {"keys": [("status", 1)]},
         {"keys": [("start_date", -1)]},
+        # Supports bounded PPPoE expiry scans and site-scoped subscriber lists.
+        {"keys": [("service_type", 1), ("status", 1), ("end_date", 1)]},
+        {"keys": [("service_type", 1), ("site_id", 1), ("status", 1), ("created_at", -1)]},
     ],
     "invoices": [
         {"keys": [("customer_id", 1)]},
@@ -132,7 +135,9 @@ INDEXES = {
         {"keys": [("start_time", -1)]},
         {"keys": [("status", 1)]},
         {"keys": [("customer_id", 1)]},
-        {"keys": [("acct_session_id", 1)], "unique": True},   # ✅ added
+        # RADIUS Acct-Session-Id is scoped to its NAS; multi-router deployments
+        # must permit the same identifier at distinct NAS addresses.
+        {"keys": [("acct_session_id", 1), ("nas_ip_address", 1)], "unique": True, "critical": True},
     ],
     "audit_logs": [
         {"keys": [("user_id", 1)]},
@@ -197,6 +202,8 @@ INDEXES = {
     ],
     "radius_accounting": [
         {"keys": [("acct_session_id", 1)]},
+        # Cross-process idempotency for Start/Stop/interim packets.
+        {"keys": [("acct_session_id", 1), ("nas_ip_address", 1)], "unique": True, "critical": True},
         {"keys": [("username", 1)]},
         {"keys": [("nas_ip_address", 1)]},
         {"keys": [("site_id", 1), ("acct_start_time", -1)]},

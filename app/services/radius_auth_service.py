@@ -9,12 +9,16 @@ Auth flow:
 """
 from datetime import datetime, timezone
 from datetime import timedelta
+import hashlib
+import hmac
+import re
 from typing import Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
+from app.core.crypto import decrypt_value
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.radius import RadiusAccounting, RadiusUser, RadiusUserType
@@ -53,13 +57,23 @@ class RadiusAuthService:
             logger.warning("RADIUS auth: missing username")
             return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Missing username")
 
-        logger.info("RADIUS auth request received: nas=%s credential_present=%s", nas_ip, bool(username))
+        logger.info("RADIUS auth request received: nas_present=%s username_present=%s", bool(nas_ip), bool(username))
 
         # 1. Find user by username
         user_doc = await self.user_collection.find_one({"username": username})
 
+        pppoe_request = self._is_pppoe_request(req)
+
         # 2. If not found, check for voucher (HotSpot voucher codes)
         if not user_doc:
+            # Never route an explicitly PPP/Framed request through the
+            # HotSpot voucher fallback, even when the username happens to
+            # match a valid voucher code.
+            if pppoe_request:
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message="Invalid credentials",
+                )
             voucher = await self._check_voucher(username, calling_station)
             if voucher:
                 try:
@@ -98,9 +112,30 @@ class RadiusAuthService:
 
         user = RadiusUser(**{**user_doc, "_id": str(user_doc["_id"])})
 
-        # 3. Verify password (cleartext comparison for RADIUS)
-        # In production, you may want to hash passwords. For RADIUS PAP, cleartext is common.
-        if not password or user.password != password:
+        is_pppoe_user = user.user_type == RadiusUserType.PPPOE
+        if pppoe_request and not is_pppoe_user:
+            return RadiusAuthResponse(
+                control_Auth_Type="Reject",
+                reply_Reply_Message="Invalid credentials",
+            )
+        if is_pppoe_user and str(req.Service_Type or "").strip().lower() in {"login-user", "1"}:
+            return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid credentials")
+
+        # RADIUS needs the original password for PAP/CHAP; store PPPoE
+        # credentials encrypted at rest and compare in memory only. Legacy
+        # records without password_encrypted remain readable during rollout.
+        try:
+            expected_password = (
+                decrypt_value(user.password) if user.password_encrypted else user.password
+            )
+        except (ValueError, TypeError):
+            logger.error("RADIUS credential decryption failed for configured user")
+            return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid credentials")
+
+        credential_ok = bool(password and hmac.compare_digest(expected_password, password))
+        if not password:
+            credential_ok = self._verify_chap(req, expected_password)
+        if not credential_ok:
             logger.warning("RADIUS auth rejected: missing or incorrect password")
             return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid credentials")
 
@@ -114,13 +149,23 @@ class RadiusAuthService:
 
         # 5. Check customer status
         if user.customer_id:
-            customer = await self.customer_collection.find_one({"_id": ObjectId(user.customer_id)})
+            try:
+                customer_oid = ObjectId(user.customer_id)
+            except Exception:
+                return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid account")
+            customer = await self.customer_collection.find_one({"_id": customer_oid})
+            if is_pppoe_user and not customer:
+                return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Customer account not found")
             if customer and customer.get("status") in ("suspended", "blocked"):
                 return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Customer suspended")
 
         # 6. Check subscription status
         if user.subscription_id:
-            sub = await self.subscription_collection.find_one({"_id": ObjectId(user.subscription_id)})
+            try:
+                subscription_oid = ObjectId(user.subscription_id)
+            except Exception:
+                return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Invalid subscription")
+            sub = await self.subscription_collection.find_one({"_id": subscription_oid})
             if not sub:
                 return RadiusAuthResponse(
                     control_Auth_Type="Reject",
@@ -133,6 +178,29 @@ class RadiusAuthService:
                     reply_Reply_Message=f"Subscription {sub_status}",
                 )
 
+            end_date = sub.get("end_date")
+            if end_date:
+                if end_date.tzinfo is None:
+                    end_date = end_date.replace(tzinfo=timezone.utc)
+                if end_date <= datetime.now(timezone.utc):
+                    return RadiusAuthResponse(
+                        control_Auth_Type="Reject",
+                        reply_Reply_Message="Subscription expired",
+                    )
+
+            if is_pppoe_user:
+                plan_id = sub.get("plan_id") or sub.get("service_id")
+                if plan_id:
+                    try:
+                        plan = await self.db.service_plans.find_one({"_id": ObjectId(str(plan_id))})
+                    except Exception:
+                        plan = None
+                    if not plan or str(plan.get("status", "active")).lower() != "active":
+                        return RadiusAuthResponse(
+                            control_Auth_Type="Reject",
+                            reply_Reply_Message="Service package inactive",
+                        )
+
             # Check data cap
             if (
                 user.data_cap_bytes is not None
@@ -142,6 +210,58 @@ class RadiusAuthService:
                     control_Auth_Type="Reject",
                     reply_Reply_Message="Data limit exceeded",
                 )
+
+        nas_identity = None
+        if is_pppoe_user:
+            if not user.subscription_id:
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message="No active PPPoE subscription",
+                )
+            try:
+                nas_identity = await resolve_nas_identity(
+                    self.db, req.NAS_IP_Address, req.NAS_Identifier
+                )
+            except Exception as exc:
+                logger.warning("PPPoE NAS resolution failed (%s)", type(exc).__name__)
+            if not nas_identity or not nas_identity.resolved:
+                logger.warning(
+                    "PPPoE auth rejected: NAS identity unresolved category=%s",
+                    nas_identity.reason if nas_identity else "lookup_failed",
+                )
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message="Unable to verify the access site",
+                )
+            if (
+                not user.site_id
+                or not user.router_id
+                or not user.nas_client_id
+                or str(user.site_id) != str(nas_identity.site_id)
+                or str(user.router_id) != str(nas_identity.router_id)
+                or str(user.nas_client_id) != str(nas_identity.nas_client_id)
+            ):
+                logger.warning("PPPoE auth rejected: subscriber NAS/site binding mismatch")
+                return RadiusAuthResponse(
+                    control_Auth_Type="Reject",
+                    reply_Reply_Message="Subscriber is not assigned to this access site",
+                )
+            if user.subscription_id:
+                sub = await self.subscription_collection.find_one(
+                    {"_id": ObjectId(user.subscription_id)}
+                )
+                if not sub or any(
+                    str(sub.get(field) or "") != str(expected)
+                    for field, expected in (
+                        ("site_id", user.site_id),
+                        ("router_id", user.router_id),
+                        ("nas_client_id", user.nas_client_id),
+                    )
+                ):
+                    return RadiusAuthResponse(
+                        control_Auth_Type="Reject",
+                        reply_Reply_Message="Subscription access-site assignment is invalid",
+                    )
 
         # 7. Update last login info
         await self.user_collection.update_one(
@@ -178,11 +298,57 @@ class RadiusAuthService:
         if user.user_type == RadiusUserType.HOTSPOT_VOUCHER and user.session_timeout:
             reply.reply_Session_Timeout = user.session_timeout
 
+        if is_pppoe_user:
+            reply.reply_Service_Type = "Framed-User"
+            reply.reply_Framed_Protocol = "PPP"
+            reply.reply_Acct_Interim_Interval = 300
+            if user.subscription_id:
+                pppoe_sub = await self.subscription_collection.find_one(
+                    {"_id": ObjectId(user.subscription_id)}, {"end_date": 1}
+                )
+                end_date = pppoe_sub.get("end_date") if pppoe_sub else None
+                if end_date:
+                    if end_date.tzinfo is None:
+                        end_date = end_date.replace(tzinfo=timezone.utc)
+                    remaining = int((end_date - datetime.now(timezone.utc)).total_seconds())
+                    if remaining <= 0:
+                        return RadiusAuthResponse(control_Auth_Type="Reject", reply_Reply_Message="Subscription expired")
+                    reply.reply_Session_Timeout = remaining
+
         # Add class attribute for accounting linkage
         reply.reply_Class = f"uid:{user.id}"
 
         logger.info("RADIUS user auth accepted: rate=%s pool=%s", user.rate_limit, user.framed_ip_pool)
         return reply
+
+    @staticmethod
+    def _is_pppoe_request(req: RadiusAuthRequest) -> bool:
+        service_type = str(req.Service_Type or "").strip().lower()
+        framed_protocol = str(req.Framed_Protocol or "").strip().lower()
+        return service_type in {"framed-user", "2"} or framed_protocol in {"ppp", "1"}
+
+    @staticmethod
+    def _chap_bytes(value: Optional[str]) -> Optional[bytes]:
+        if not value:
+            return None
+        normalized = value.strip()
+        if normalized.lower().startswith("0x"):
+            normalized = normalized[2:]
+        if re.fullmatch(r"[0-9a-fA-F]+", normalized) and len(normalized) % 2 == 0:
+            try:
+                return bytes.fromhex(normalized)
+            except ValueError:
+                return None
+        return normalized.encode("latin-1", errors="strict")
+
+    @classmethod
+    def _verify_chap(cls, req: RadiusAuthRequest, password: str) -> bool:
+        chap_response = cls._chap_bytes(req.CHAP_Password)
+        challenge = cls._chap_bytes(req.CHAP_Challenge)
+        if not chap_response or len(chap_response) != 17 or not challenge:
+            return False
+        digest = hashlib.md5(chap_response[:1] + password.encode("utf-8") + challenge).digest()
+        return hmac.compare_digest(digest, chap_response[1:])
 
     async def _check_voucher(self, code: str, calling_station: str) -> Optional[dict]:
         """Check an unused voucher or a retry from the device that claimed it."""
@@ -453,7 +619,25 @@ class RadiusAuthService:
             logger.warning("RADIUS accounting: missing Acct-Session-Id")
             return
 
-        logger.debug(f"RADIUS accounting: {acct_type} | user={username} | session={session_id}")
+        if acct_type not in {"Accounting-On", "Accounting-Off"}:
+            account = await self.user_collection.find_one({"username": username}) if username else None
+            explicit_pppoe = self._is_pppoe_accounting(req)
+            is_pppoe = explicit_pppoe or bool(account and account.get("user_type") == RadiusUserType.PPPOE.value)
+            if is_pppoe:
+                identity = await resolve_nas_identity(self.db, req.NAS_IP_Address, req.NAS_Identifier)
+                if not identity.resolved or not account:
+                    raise ValidationError("PPPoE accounting NAS identity is not configured")
+                if any(
+                    not account.get(key) or str(account.get(key)) != str(expected)
+                    for key, expected in (
+                        ("router_id", identity.router_id),
+                        ("site_id", identity.site_id),
+                        ("nas_client_id", identity.nas_client_id),
+                    )
+                ):
+                    raise ValidationError("PPPoE accounting NAS does not match subscriber assignment")
+
+        logger.debug("RADIUS accounting request received: type=%s", acct_type)
 
         if acct_type == "Start":
             await self._accounting_start(req)
@@ -496,6 +680,11 @@ class RadiusAuthService:
                     subscription_id = user.get("subscription_id")
             elif req.Class.startswith("voucher:"):
                 voucher_id = req.Class[8:]
+        if req.User_Name and not voucher_id:
+            radius_user = await self.user_collection.find_one({"username": req.User_Name})
+            if radius_user and radius_user.get("user_type") == RadiusUserType.PPPOE.value:
+                customer_id = radius_user.get("customer_id")
+                subscription_id = radius_user.get("subscription_id")
         if not voucher_id and req.User_Name:
             voucher = await self.voucher_collection.find_one(
                 {"voucher_code": req.User_Name},
@@ -534,15 +723,19 @@ class RadiusAuthService:
             "updated_at": now,
         }
 
+        # Acct-Session-Id is only unique within a NAS. Include the NAS address
+        # in every read/write key so independent routers/sites cannot collide.
+        session_key = self._accounting_session_key(req)
+
         accounting_result = await self.acct_collection.update_one(
-            {"acct_session_id": req.Acct_Session_Id},
+            session_key,
             {"$setOnInsert": doc},
             upsert=True,
         )
 
         # Upsert live session
         await self.session_collection.update_one(
-            {"acct_session_id": req.Acct_Session_Id},
+            session_key,
             {
                 "$setOnInsert": {
                     "acct_session_id": req.Acct_Session_Id,
@@ -574,7 +767,7 @@ class RadiusAuthService:
                 {"$inc": {"total_sessions": 1}},
             )
 
-        logger.info(f"RADIUS acct START: {req.User_Name} | session={req.Acct_Session_Id} | ip={req.Framed_IP_Address}")
+        logger.info("RADIUS accounting start recorded")
 
     async def _accounting_stop(self, req: RadiusAccountingRequest) -> None:
         """Handle Accounting-Stop."""
@@ -582,6 +775,7 @@ class RadiusAuthService:
         session_time = req.Acct_Session_Time or 0
         input_octets = req.Acct_Input_Octets or 0
         output_octets = req.Acct_Output_Octets or 0
+        session_key = await self._resolve_accounting_session_key(req)
 
         # Calculate total bytes including gigawords
         total_input = input_octets + ((req.Acct_Input_Gigawords or 0) * 2**32)
@@ -589,10 +783,7 @@ class RadiusAuthService:
 
         # Update accounting record
         result = await self.acct_collection.update_one(
-            {
-                "acct_session_id": req.Acct_Session_Id,
-                "acct_stop_time": {"$exists": False},
-            },
+            {**session_key, "acct_stop_time": {"$exists": False}},
             {
                 "$set": {
                     "acct_stop_time": now,
@@ -613,7 +804,7 @@ class RadiusAuthService:
 
         # Update live session to offline
         await self.session_collection.update_one(
-            {"acct_session_id": req.Acct_Session_Id},
+            session_key,
             {
                 "$set": {
                     "status": "offline",
@@ -639,7 +830,7 @@ class RadiusAuthService:
             )
 
         # Update subscription data usage
-        acct_doc = await self.acct_collection.find_one({"acct_session_id": req.Acct_Session_Id})
+        acct_doc = await self.acct_collection.find_one(session_key)
         if acct_doc and acct_doc.get("subscription_id"):
             await self.subscription_collection.update_one(
                 {"_id": ObjectId(acct_doc["subscription_id"])},
@@ -651,7 +842,7 @@ class RadiusAuthService:
                 },
             )
 
-        logger.info(f"RADIUS acct STOP: {req.User_Name} | session={req.Acct_Session_Id} | time={session_time}s | in={total_input} | out={total_output}")
+        logger.info("RADIUS accounting stop recorded: duration_seconds=%s", session_time)
 
     async def _accounting_interim(self, req: RadiusAccountingRequest) -> None:
         """Handle Interim-Update."""
@@ -659,12 +850,13 @@ class RadiusAuthService:
         session_time = req.Acct_Session_Time or 0
         input_octets = req.Acct_Input_Octets or 0
         output_octets = req.Acct_Output_Octets or 0
+        session_key = await self._resolve_accounting_session_key(req)
         total_input = input_octets + ((req.Acct_Input_Gigawords or 0) * 2**32)
         total_output = output_octets + ((req.Acct_Output_Gigawords or 0) * 2**32)
 
         # Update accounting record
         await self.acct_collection.update_one(
-            {"acct_session_id": req.Acct_Session_Id},
+            {**session_key, "acct_stop_time": {"$exists": False}},
             {
                 "$set": {
                     "acct_update_time": now,
@@ -679,7 +871,7 @@ class RadiusAuthService:
 
         # Update live session
         await self.session_collection.update_one(
-            {"acct_session_id": req.Acct_Session_Id},
+            {**session_key, "status": "online"},
             {
                 "$set": {
                     "acct_session_time": session_time,
@@ -692,7 +884,7 @@ class RadiusAuthService:
         )
 
         # Check data cap and disconnect if exceeded
-        acct_doc = await self.acct_collection.find_one({"acct_session_id": req.Acct_Session_Id})
+        acct_doc = await self.acct_collection.find_one(session_key)
         if acct_doc and acct_doc.get("subscription_id"):
             sub = await self.subscription_collection.find_one(
                 {"_id": ObjectId(acct_doc["subscription_id"])}
@@ -700,9 +892,40 @@ class RadiusAuthService:
             if sub and sub.get("data_cap_bytes"):
                 used = sub.get("data_used_bytes", 0) + total_input + total_output
                 if used >= sub["data_cap_bytes"]:
-                    logger.warning(f"Data cap exceeded for subscription {acct_doc['subscription_id']}, user {req.User_Name}")
+                    logger.warning("Data cap exceeded for a subscriber accounting session")
                     # Note: Actual disconnect would require CoA or waiting for next auth
                     # For now, we log it. CoA implementation is Phase 7/8.
+
+    @staticmethod
+    def _is_pppoe_accounting(req: RadiusAccountingRequest) -> bool:
+        service_type = str(req.Service_Type or "").strip().lower()
+        framed_protocol = str(req.Framed_Protocol or "").strip().lower()
+        return service_type in {"framed-user", "2"} or framed_protocol in {"ppp", "1"}
+
+    @staticmethod
+    def _accounting_session_key(req: RadiusAccountingRequest) -> dict:
+        return {
+            "acct_session_id": req.Acct_Session_Id,
+            "nas_ip_address": req.NAS_IP_Address or "",
+        }
+
+    async def _resolve_accounting_session_key(self, req: RadiusAccountingRequest) -> dict:
+        """Resolve NAS-omitting updates only when a session ID is unambiguous."""
+        if req.NAS_IP_Address:
+            return self._accounting_session_key(req)
+        rows = await self.acct_collection.find(
+            {"acct_session_id": req.Acct_Session_Id}
+        ).limit(2).to_list(length=2)
+        if len(rows) > 1:
+            raise ValidationError("Accounting session ID is ambiguous without NAS-IP-Address")
+        if len(rows) == 1:
+            return {
+                "acct_session_id": req.Acct_Session_Id,
+                "nas_ip_address": rows[0].get("nas_ip_address"),
+            }
+        # No prior Start record: keep the packet idempotent under the empty
+        # NAS key, without associating it to an arbitrary router.
+        return self._accounting_session_key(req)
 
     # ── SESSION QUERIES ──
 

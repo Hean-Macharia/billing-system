@@ -28,6 +28,7 @@ class ServicePlanCreate(BaseModel):
     features: List[ServiceFeatureCreate] = Field(default_factory=list)
     fair_usage_policy: Optional[str] = None
     data_cap_gb: Optional[int] = None
+    available_site_ids: List[str] = Field(default_factory=list)
     minimum_contract_months: int = 0
     early_termination_fee_kes: float = 0.0
     grace_period_days: int = 7
@@ -50,6 +51,7 @@ class ServicePlanUpdate(BaseModel):
     features: Optional[List[ServiceFeatureCreate]] = None
     fair_usage_policy: Optional[str] = None
     data_cap_gb: Optional[int] = None
+    available_site_ids: Optional[List[str]] = None
     minimum_contract_months: Optional[int] = None
     early_termination_fee_kes: Optional[float] = None
     grace_period_days: Optional[int] = None

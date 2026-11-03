@@ -3,6 +3,7 @@ from bson import ObjectId
 from mongomock_motor import AsyncMongoMockClient
 
 from app.services.radius_admin_service import RadiusAdminService
+from app.core.crypto import decrypt_value
 
 
 @pytest.mark.asyncio
@@ -32,12 +33,14 @@ async def test_sync_updates_existing_pppoe_password_without_fallback_overwrite()
     service = RadiusAdminService(db)
     updated = await service.sync_user_from_subscription(str(subscription_id))
 
-    assert updated.password == "updated-password"
+    assert updated.password != "updated-password"
+    assert updated.password_encrypted is True
+    assert decrypt_value(updated.password) == "updated-password"
     await db.subscriptions.update_one(
         {"_id": subscription_id},
         {"$unset": {"pppoe_password": ""}},
     )
     resynced = await service.sync_user_from_subscription(str(subscription_id))
 
-    assert resynced.password == "updated-password"
+    assert decrypt_value(resynced.password) == "updated-password"
     client.close()

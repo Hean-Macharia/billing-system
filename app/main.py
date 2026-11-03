@@ -325,7 +325,7 @@ def create_app() -> FastAPI:
         )
 
     # ── ROUTERS ──
-    from app.routes import auth, customers, services, subscriptions, invoices, payments
+    from app.routes import auth, customers, services, subscriptions, invoices, payments, pppoe
     from app.routes import mpesa
     from app.routes import radius as radius_admin
     from app.routes import radius_auth as radius_internal
@@ -344,6 +344,7 @@ def create_app() -> FastAPI:
     app.include_router(customers.router)
     app.include_router(services.router)
     app.include_router(subscriptions.router)
+    app.include_router(pppoe.router)
     app.include_router(invoices.router)
     app.include_router(payments.router)
     app.include_router(mpesa.router)
@@ -400,6 +401,15 @@ def create_app() -> FastAPI:
             StaticFiles(directory=project_root / app_path, html=True),
             name=app_path,
         )
+
+    # Mount the public shared styles explicitly. This keeps the shared layer
+    # available under its documented URL while leaving the repository root
+    # protected by PublicFrontendFiles' path allowlist.
+    app.mount(
+        "/frontend/shared/css",
+        StaticFiles(directory=project_root / "frontend" / "shared" / "css"),
+        name="shared-frontend-css",
+    )
 
     # Serve only the isolated frontend directory at the site root. Mounting the
     # repository root here would expose configuration files such as .env.

@@ -18,7 +18,17 @@ class ServicePlanService:
         self.db = db
         self.collection = db.service_plans
 
+    async def _validate_sites(self, site_ids: list[str]) -> None:
+        for site_id in site_ids:
+            try:
+                site = await self.db.sites.find_one({"_id": ObjectId(site_id)})
+            except Exception as exc:
+                raise ValidationError("Package site allowlist contains an invalid site ID") from exc
+            if not site or str(site.get("status", "")).lower() != "active":
+                raise ValidationError("Package site allowlist must contain active sites only")
+
     async def create(self, data: ServicePlanCreate, created_by: Optional[str] = None) -> ServicePlanInDB:
+        await self._validate_sites(data.available_site_ids)
         existing = await self.collection.find_one({"plan_code": data.plan_code})
         if existing:
             raise ConflictError(f"Plan with code '{data.plan_code}' already exists")
@@ -80,6 +90,8 @@ class ServicePlanService:
         update_data = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
         if not update_data:
             raise ValidationError("No fields to update")
+        if "available_site_ids" in update_data:
+            await self._validate_sites(update_data["available_site_ids"])
         update_data["updated_at"] = datetime.now(timezone.utc)
         result = await self.collection.update_one({"_id": ObjectId(plan_id)}, {"$set": update_data})
         if result.matched_count == 0:

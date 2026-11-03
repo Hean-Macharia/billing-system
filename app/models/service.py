@@ -80,6 +80,8 @@ class ServicePlan(BaseModel):
     features: List[ServiceFeature] = Field(default_factory=list)
     fair_usage_policy: Optional[str] = None
     data_cap_gb: Optional[int] = None
+    # Empty means globally available; a non-empty list is an explicit site allowlist.
+    available_site_ids: List[str] = Field(default_factory=list)
     minimum_contract_months: int = 0
     early_termination_fee_kes: float = 0.0
     grace_period_days: int = 7

@@ -45,12 +45,17 @@ class RadiusUser(BaseModel):
 
     id: Optional[str] = Field(alias="_id", default=None)
     username: str = Field(..., min_length=1, max_length=128)
-    password: str = Field(..., min_length=1, max_length=128)  # Cleartext for RADIUS
+    # Encrypted Fernet credentials are longer than the accepted plaintext
+    # password (up to 128 chars); leave room for the ciphertext at read time.
+    password: str = Field(..., min_length=1, max_length=512)
+    password_encrypted: bool = False
     user_type: RadiusUserType = RadiusUserType.PPPOE
     customer_id: Optional[str] = None
     service_id: Optional[str] = None
     subscription_id: Optional[str] = None
     site_id: Optional[str] = None
+    router_id: Optional[str] = None
+    nas_client_id: Optional[str] = None
     voucher_id: Optional[str] = None  # For hotspot voucher users
     package_id: Optional[str] = None
 

@@ -99,12 +99,78 @@ class AutomationService:
         voucher_service = VoucherService(self.db)
         voucher_result = await voucher_service.expire_sweep()
 
+        pppoe_result = await self.run_pppoe_expiry_sweep(now=now)
+
         summary = {
             "invoices_marked_overdue": invoices_marked_overdue,
             "vouchers_expired": voucher_result["expired"],
+            "pppoe_subscriptions_expired": pppoe_result["expired"],
+            "pppoe_sessions_disconnected": pppoe_result["disconnected"],
+            "pppoe_expiry_errors": pppoe_result["errors"],
         }
         await self._log_run("expiry_sweep", summary)
         return summary
+
+    async def run_pppoe_expiry_sweep(self, now: Optional[datetime] = None) -> dict:
+        """Expire PPPoE subscriptions once and best-effort disconnect sessions.
+
+        Database status is authoritative for subsequent RADIUS requests. A
+        session is only reported disconnected when the existing router adapter
+        confirms that operation.
+        """
+        now = now or datetime.now(timezone.utc)
+        candidates = await self.db.subscriptions.find({
+            "service_type": "pppoe", "status": "active", "end_date": {"$lte": now},
+        }).limit(500).to_list(length=500)
+        expired = disconnected = 0
+        errors = 0
+        for sub in candidates:
+            result = await self.db.subscriptions.update_one(
+                {"_id": sub["_id"], "service_type": "pppoe", "status": "active", "end_date": {"$lte": now}},
+                {"$set": {"status": "expired", "expired_at": now, "updated_at": now}},
+            )
+            if not result.modified_count:
+                continue
+            expired += 1
+            subscription_id = str(sub["_id"])
+            await self.db.radius_users.update_many(
+                {"subscription_id": subscription_id, "user_type": "pppoe"},
+                {"$set": {"status": "expired", "updated_at": now}},
+            )
+            try:
+                customer = await self.db.customers.find_one({"_id": ObjectId(str(sub["customer_id"]))})
+                if customer:
+                    await self.notifications.notify(
+                        subject="PPPoE subscription expired",
+                        body=f"Your {sub.get('plan_name') or 'internet'} subscription has expired. Renew your service to reconnect.",
+                        customer_id=str(sub["customer_id"]),
+                        phone=customer.get("phone"),
+                        notification_type=NotificationType.SERVICE_SUSPENDED,
+                    )
+            except Exception as exc:
+                errors += 1
+                logger.warning("PPPoE expiry notification failed category=%s", type(exc).__name__)
+            sessions = await self.db.radius_sessions.find({
+                "subscription_id": subscription_id, "status": "online",
+            }).limit(20).to_list(length=20)
+            for session in sessions:
+                try:
+                    router_id = session.get("router_id") or sub.get("router_id")
+                    if not router_id or not session.get("username"):
+                        continue
+                    response = await RouterService(self.db).disconnect_pppoe_user(
+                        str(router_id), session["username"]
+                    )
+                    if response.get("disconnected"):
+                        await self.db.radius_sessions.update_one(
+                            {"_id": session["_id"], "status": "online"},
+                            {"$set": {"status": "offline", "last_seen": now}},
+                        )
+                        disconnected += 1
+                except Exception as exc:  # router outage does not undo expiry
+                    errors += 1
+                    logger.warning("PPPoE expiry disconnect failed category=%s", type(exc).__name__)
+        return {"expired": expired, "disconnected": disconnected, "errors": errors}
 
     # ------------------------------------------------------------------ #
     # 3. Suspension
@@ -188,10 +254,21 @@ class AutomationService:
 
         now = datetime.now(timezone.utc)
         await self.db.customers.update_one({"_id": ObjectId(customer_id)}, {"$set": {"status": "active", "updated_at": now}})
-        await self.db.subscriptions.update_many(
-            {"customer_id": customer_id, "status": "suspended"},
-            {"$set": {"status": "active", "updated_at": now}},
-        )
+        eligible_subscriptions = await self.db.subscriptions.find({
+            "customer_id": customer_id,
+            "status": "suspended",
+            "$or": [{"end_date": None}, {"end_date": {"$exists": False}}, {"end_date": {"$gt": now}}],
+        }, {"_id": 1}).to_list(length=500)
+        eligible_ids = [str(row["_id"]) for row in eligible_subscriptions]
+        if eligible_ids:
+            await self.db.subscriptions.update_many(
+                {"_id": {"$in": [ObjectId(value) for value in eligible_ids]}, "status": "suspended"},
+                {"$set": {"status": "active", "updated_at": now}},
+            )
+            await self.db.radius_users.update_many(
+                {"subscription_id": {"$in": eligible_ids}, "user_type": "pppoe", "status": "suspended"},
+                {"$set": {"status": "active", "updated_at": now}},
+            )
         await self.notifications.notify(
             subject="Service restored",
             body=f"Hi {customer.get('full_name', '')}, your payment has been received and your internet service has been restored. Thank you!",
